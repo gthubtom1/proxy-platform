@@ -1,0 +1,12 @@
+[Unit]
+Description=stunnel HTTPS-proxy TLS front (18443 -> gateway 18001)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/stunnel /etc/stunnel/proxy-tls.conf
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

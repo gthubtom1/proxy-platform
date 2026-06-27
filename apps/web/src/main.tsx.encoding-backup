@@ -1,0 +1,3976 @@
+import React, { FormEvent, useEffect, useMemo, useState } from "react";
+import { createRoot } from "react-dom/client";
+import "./styles.css";
+
+type AdminUser = {
+  id: number;
+  username: string;
+  role: string;
+  status: string;
+  trafficQuotaBytes: string;
+  trafficUsedBytes: string;
+  allowedCountries?: string[];
+  maxProxyEntries: number;
+  maxConcurrentConnections: number;
+  proxyEntryCount: number;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ProxyEntry = {
+  id: number;
+  userId: number;
+  username: string;
+  targetCountry: string;
+  targetRegion: string | null;
+  targetCity: string | null;
+  currentUpstreamId: number | null;
+  currentIp: string | null;
+  currentCountry: string | null;
+  currentRegion: string | null;
+  currentCity: string | null;
+  status: string;
+  trafficUsedBytes: string;
+  activeConnections: number;
+  lastUsedAt: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  user: {
+    id: number;
+    username: string;
+    status: string;
+    trafficQuotaBytes: string;
+    trafficUsedBytes: string;
+  };
+  lockedUpstream: {
+    id: number;
+    status: string;
+    currentIp: string | null;
+    country: string | null;
+    region: string | null;
+    city: string | null;
+    latencyMs: number | null;
+    lastCheckedAt: string | null;
+  } | null;
+};
+
+type AuthUser = {
+  id: number;
+  username: string;
+  role: AppMode;
+};
+
+type AuthSession = {
+  token: string;
+  user: AuthUser;
+};
+
+type LoginFormState = {
+  username: string;
+  password: string;
+};
+
+type UpstreamProxy = {
+  id: number;
+  host: string;
+  port: number;
+  username: string;
+  status: string;
+  currentIp: string | null;
+  country: string | null;
+  region: string | null;
+  city: string | null;
+  latencyMs: number | null;
+  score: number;
+  failCount: number;
+  successCount: number;
+  lastErrorType: string | null;
+  lastCheckedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  scanLogs: Array<{
+    id: number;
+    success: boolean;
+    exitIp: string | null;
+    country: string | null;
+    region: string | null;
+    city: string | null;
+    latencyMs: number | null;
+    errorType: string | null;
+    message: string | null;
+    createdAt: string;
+  }>;
+};
+
+type TrafficDaily = {
+  id: number;
+  userId: number;
+  proxyEntryId: number;
+  date: string;
+  bytesUp: string;
+  bytesDown: string;
+  totalBytes: string;
+  connections: number;
+  user: {
+    id: number;
+    username: string;
+  };
+  proxyEntry: {
+    id: number;
+    username: string;
+    targetCountry: string;
+    targetRegion: string | null;
+    targetCity: string | null;
+  };
+};
+
+type UpstreamImportResponse = {
+  created: number;
+  duplicates: number;
+  failed: number;
+  items: Array<
+    | {
+        ok: true;
+        lineNumber: number;
+        id: number;
+        host: string;
+        port: number;
+        username: string;
+        action: "created" | "duplicate";
+      }
+    | {
+        ok: false;
+        lineNumber: number;
+        error: string;
+      }
+  >;
+};
+
+type CreatedProxyResponse = {
+  ok: true;
+  clientProxy: {
+    host: string;
+    port: number;
+    username: string;
+    password: string;
+    copyText: string;
+  };
+};
+
+type LoginResponse = {
+  token: string;
+  user: AuthUser;
+};
+
+type UserDashboardResponse = {
+  user: AdminUser;
+  entries: ProxyEntry[];
+  rows: TrafficDaily[];
+};
+
+type CreateUserResponse = {
+  ok?: boolean;
+  user?: AdminUser;
+  initialPassword?: string;
+  error?: string;
+};
+
+type CreateUserResult = {
+  user: AdminUser;
+  initialPassword: string;
+};
+
+type CreateProxyEntryResult = {
+  copies: string[];
+  failed: number;
+};
+
+type ResetUserPasswordResponse = {
+  ok?: boolean;
+  user?: AdminUser;
+  newPassword?: string;
+  error?: string;
+};
+
+type UpdateUserResponse = {
+  ok?: boolean;
+  user?: AdminUser;
+  error?: string;
+};
+
+type UpdateProxyEntryStatusResponse = {
+  ok?: boolean;
+  entry?: {
+    id: number;
+    username: string;
+    status: string;
+    currentUpstreamId: number | null;
+    currentIp: string | null;
+    currentCountry: string | null;
+    currentRegion: string | null;
+    currentCity: string | null;
+    updatedAt: string;
+  };
+  error?: string;
+};
+
+type OperationLog = {
+  id: number;
+  actorUserId: number | null;
+  action: string;
+  targetType: string;
+  targetId: string;
+  createdAt: string;
+  actor: {
+    id: number;
+    username: string;
+    role: string;
+  } | null;
+  detail: unknown;
+};
+
+type UserFormState = {
+  username: string;
+  password: string;
+  trafficQuotaGb: string;
+  maxProxyEntries: string;
+  allowedCountries: string[];
+};
+
+type UserSettingsFormState = {
+  status: string;
+  trafficQuotaGb: string;
+  maxProxyEntries: string;
+  allowedCountries: string[];
+};
+
+type EntryFormState = {
+  userId: string;
+  targetCountry: string;
+  targetRegion: string;
+  targetCity: string;
+  count: string;
+};
+
+type AppMode = "admin" | "user";
+type AdminPage = "dashboard" | "users" | "upstreams" | "geo" | "proxies" | "logs" | "settings";
+type UserPage = "home" | "generate" | "proxies" | "traffic";
+
+type ViteImportMeta = ImportMeta & {
+  env?: {
+    VITE_APP_SURFACE?: AppMode;
+    VITE_API_BASE_URL?: string;
+  };
+};
+
+type RegionInventory = {
+  bad: number;
+  city: string | null;
+  country: string | null;
+  free: number;
+  key: string;
+  label: string;
+  locked: number;
+  region: string | null;
+  total: number;
+};
+
+type AdminReadOnlyIntent = {
+  country: string | null;
+  page: "logs" | "proxies" | "upstreams" | "users";
+  search: string;
+  token: number;
+};
+
+type SystemConfig = {
+  gatewayPort: number;
+  supportedCountries: string[];
+  scanBatchSize: number;
+  scanConcurrency: number;
+  scanTimeoutMs: number;
+  scanIntervalMs: number;
+  geoCacheTtlMs: number;
+  workerRepeat: boolean;
+  backupStatus: string;
+};
+
+const env = (import.meta as ViteImportMeta).env;
+const appSurface: AppMode = env?.VITE_APP_SURFACE === "user" ? "user" : "admin";
+const apiBase = env?.VITE_API_BASE_URL || "http://127.0.0.1:3110";
+const gatewayDisplay = "VPS_IP:18001";
+const countries = [
+  { value: "us", label: "US" },
+  { value: "gb", label: "GB" },
+  { value: "fr", label: "FR" },
+  { value: "ca", label: "CA" },
+  { value: "au", label: "AU" }
+];
+
+function App() {
+  const [adminPage, setAdminPage] = useState<AdminPage>("dashboard");
+  const [userPage, setUserPage] = useState<UserPage>("home");
+  const storageKey = `proxy-platform:${appSurface}:auth`;
+  const [session, setSession] = useState<AuthSession | null>(() => readStoredSession(storageKey, appSurface));
+  const [loginForm, setLoginForm] = useState<LoginFormState>({ username: "", password: "" });
+  const [users, setUsers] = useState<AdminUser[]>([]);
+  const [entries, setEntries] = useState<ProxyEntry[]>([]);
+  const [upstreams, setUpstreams] = useState<UpstreamProxy[]>([]);
+  const [trafficRows, setTrafficRows] = useState<TrafficDaily[]>([]);
+  const [operationLogs, setOperationLogs] = useState<OperationLog[]>([]);
+  const [systemConfig, setSystemConfig] = useState<SystemConfig | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSaving, setIsSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [lastLoadedAt, setLastLoadedAt] = useState<Date | null>(null);
+  const [createdCopies, setCreatedCopies] = useState<string[]>([]);
+  const [importResult, setImportResult] = useState<UpstreamImportResponse | null>(null);
+  const [upstreamText, setUpstreamText] = useState("");
+  const [adminReadOnlyIntent, setAdminReadOnlyIntent] = useState<AdminReadOnlyIntent | null>(null);
+  const [userForm, setUserForm] = useState<UserFormState>({
+    username: "",
+    password: "",
+    trafficQuotaGb: "0",
+    maxProxyEntries: "10",
+    allowedCountries: countries.map((country) => country.value)
+  });
+  const [entryForm, setEntryForm] = useState<EntryFormState>({
+    userId: "",
+    targetCountry: "us",
+    targetRegion: "",
+    targetCity: "",
+    count: "1"
+  });
+
+  const currentUser = appSurface === "user" ? users[0] ?? null : null;
+  const upstreamStats = useMemo(() => countStatuses(upstreams.map((upstream) => upstream.status)), [upstreams]);
+  const entryStats = useMemo(() => countStatuses(entries.map((entry) => entry.status)), [entries]);
+  const regions = useMemo(() => buildRegionInventory(upstreams), [upstreams]);
+  const activeUsers = users.filter((user) => user.status === "active").length;
+  const activeEntries = entries.filter((entry) => entry.status === "active").length;
+  const todayTraffic = sumStrings(trafficRows.filter((row) => isToday(row.date)).map((row) => row.totalBytes));
+  const monthTraffic = sumStrings(trafficRows.filter((row) => isThisMonth(row.date)).map((row) => row.totalBytes));
+
+  useEffect(() => {
+    if (!session) {
+      setIsLoading(false);
+      return;
+    }
+    void loadAll();
+  }, [session]);
+
+  async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
+    const response = await fetch(`${apiBase}${path}`, {
+      ...init,
+      headers: {
+        ...(session ? { Authorization: `Bearer ${session.token}` } : {}),
+        ...(init?.headers ?? {})
+      }
+    });
+    const body = (await response.json()) as T & { error?: string };
+    if (!response.ok) throw new Error(body.error || `请求失败�?{path}`);
+    return body;
+  }
+
+  async function loadAll() {
+    if (!session) return;
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (appSurface === "user") {
+        const dashboard = await requestJson<UserDashboardResponse>("/api/user/dashboard");
+        setUsers([dashboard.user]);
+        setEntries(dashboard.entries);
+        setTrafficRows(dashboard.rows);
+        setUpstreams([]);
+        setOperationLogs([]);
+        setSystemConfig(null);
+        setLastLoadedAt(new Date());
+        return;
+      }
+
+      const [userBody, entryBody, upstreamBody, trafficBody, logBody, systemConfigBody] = await Promise.all([
+        requestJson<{ users: AdminUser[] }>("/api/admin/users"),
+        requestJson<{ entries: ProxyEntry[] }>("/api/admin/proxy-entries"),
+        requestJson<{ upstreams: UpstreamProxy[] }>("/api/admin/upstreams"),
+        requestJson<{ rows: TrafficDaily[] }>("/api/admin/traffic-daily"),
+        requestJson<{ logs: OperationLog[] }>("/api/admin/operation-logs"),
+        requestJson<{ config: SystemConfig }>("/api/admin/system-config")
+      ]);
+
+      setUsers(userBody.users);
+      setEntries(entryBody.entries);
+      setUpstreams(upstreamBody.upstreams);
+      setTrafficRows(trafficBody.rows);
+      setOperationLogs(logBody.logs);
+      setSystemConfig(systemConfigBody.config);
+      setLastLoadedAt(new Date());
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "读取数据失败");
+    } finally {
+      setIsLoading(false);
+    }
+  }
+
+  async function refreshAll() {
+    await loadAll();
+    setNotice("数据已刷新�?);
+  }
+
+  function openAdminReadOnlyPage(page: "logs" | "proxies" | "upstreams" | "users", options: { country?: string | null; search?: string }) {
+    setAdminPage(page);
+    setAdminReadOnlyIntent({
+      page,
+      country: options.country ?? null,
+      search: options.search?.trim() || "",
+      token: Date.now()
+    });
+  }
+
+  async function login(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const body = await requestJson<LoginResponse>(`/api/${appSurface}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: loginForm.username.trim(),
+          password: loginForm.password
+        })
+      });
+      const nextSession = { token: body.token, user: body.user };
+      localStorage.setItem(storageKey, JSON.stringify(nextSession));
+      setLoginForm({ username: "", password: "" });
+      setSession(nextSession);
+      setNotice("登录成功�?);
+    } catch (loginError) {
+      setError(loginError instanceof Error ? loginError.message : "登录失败");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  function logout() {
+    localStorage.removeItem(storageKey);
+    setSession(null);
+    setUsers([]);
+    setEntries([]);
+    setUpstreams([]);
+    setTrafficRows([]);
+    setOperationLogs([]);
+    setSystemConfig(null);
+    setCreatedCopies([]);
+    setLastLoadedAt(null);
+  }
+
+  async function createUser(event: FormEvent<HTMLFormElement>): Promise<CreateUserResult | null> {
+    event.preventDefault();
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const body = await requestJson<CreateUserResponse>("/api/admin/users", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: userForm.username.trim(),
+          password: userForm.password.trim() || undefined,
+          trafficQuotaGb: Number(userForm.trafficQuotaGb || 0),
+          maxProxyEntries: Number(userForm.maxProxyEntries || 10),
+          allowedCountries: userForm.allowedCountries
+        })
+      });
+      if (!body.ok) throw new Error(body.error || "创建用户失败");
+      setUserForm({
+        username: "",
+        password: "",
+        trafficQuotaGb: "0",
+        maxProxyEntries: "10",
+        allowedCountries: countries.map((country) => country.value)
+      });
+      setNotice("用户已创建。初始密码只会显示这一回，请现在保存�?);
+      await loadAll();
+      if (body.user && body.initialPassword) {
+        return {
+          user: body.user,
+          initialPassword: body.initialPassword
+        };
+      }
+      return null;
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "创建用户失败");
+      return null;
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function resetUserPassword(userId: number, password: string): Promise<ResetUserPasswordResponse> {
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const body = await requestJson<ResetUserPasswordResponse>(`/api/admin/users/${userId}/password-reset`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          password: password.trim() || undefined
+        })
+      });
+
+      if (!body.ok || !body.newPassword) throw new Error(body.error || "重置密码失败");
+      if (body.user) {
+        setUsers((current) => current.map((user) => (user.id === body.user?.id ? body.user : user)));
+      }
+      setNotice("密码已重置。新密码只显示这一次，请现在保存�?);
+      await loadAll();
+      return body;
+    } catch (resetError) {
+      const message = resetError instanceof Error ? resetError.message : "重置密码失败";
+      setError(message);
+      return { ok: false, error: message };
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function updateUserSettings(userId: number, form: UserSettingsFormState): Promise<UpdateUserResponse> {
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const body = await requestJson<UpdateUserResponse>(`/api/admin/users/${userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          status: form.status,
+          trafficQuotaGb: Number(form.trafficQuotaGb || 0),
+          maxProxyEntries: Number(form.maxProxyEntries || 1),
+          allowedCountries: form.allowedCountries
+        })
+      });
+
+      if (!body.ok || !body.user) throw new Error(body.error || "保存用户设置失败");
+      setUsers((current) => current.map((user) => (user.id === body.user?.id ? body.user : user)));
+      setNotice("用户设置已保存，并已写入操作日志�?);
+      await loadAll();
+      return body;
+    } catch (updateError) {
+      const message = updateError instanceof Error ? updateError.message : "保存用户设置失败";
+      setError(message);
+      return { ok: false, error: message };
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function updateProxyEntryStatus(entryId: number, status: "active" | "disabled"): Promise<UpdateProxyEntryStatusResponse> {
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+
+    try {
+      const body = await requestJson<UpdateProxyEntryStatusResponse>(`/api/admin/proxy-entries/${entryId}/status`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status })
+      });
+
+      if (!body.ok || !body.entry) throw new Error(body.error || "修改代理状态失�?);
+      setEntries((current) =>
+        current.map((entry) =>
+          entry.id === body.entry?.id
+            ? {
+                ...entry,
+                status: body.entry.status,
+                currentUpstreamId: body.entry.currentUpstreamId,
+                currentIp: body.entry.currentIp,
+                currentCountry: body.entry.currentCountry,
+                currentRegion: body.entry.currentRegion,
+                currentCity: body.entry.currentCity,
+                updatedAt: body.entry.updatedAt
+              }
+            : entry
+        )
+      );
+      setNotice(
+        status === "disabled"
+          ? "代理已停用。当前绑定已按规则处理，并已写入操作日志�?
+          : "代理已启用。系统已尝试重新匹配可用上游，并已写入操作日志�?
+      );
+      await loadAll();
+      return body;
+    } catch (updateError) {
+      const message = updateError instanceof Error ? updateError.message : "修改代理状态失�?;
+      setError(message);
+      return { ok: false, error: message };
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function importUpstreams(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+    setImportResult(null);
+
+    try {
+      const response = await fetch(`${apiBase}/api/admin/upstreams/import`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${session?.token ?? ""}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ text: upstreamText })
+      });
+      const body = (await response.json()) as UpstreamImportResponse | { error?: string };
+      if (!response.ok && response.status !== 207) {
+        throw new Error("error" in body && body.error ? body.error : "导入上游失败");
+      }
+      const result = body as UpstreamImportResponse;
+      setImportResult(result);
+      setNotice(`导入完成：新�?${result.created} 条，重复 ${result.duplicates} 条，失败 ${result.failed} 条。`);
+      if (result.created > 0 && result.failed === 0) setUpstreamText("");
+      await loadAll();
+    } catch (importError) {
+      setError(importError instanceof Error ? importError.message : "导入上游失败");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function createEntries(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+    setCreatedCopies([]);
+
+    const count = Math.max(1, Math.min(20, Number(entryForm.count || 1)));
+    const copies: string[] = [];
+    let failed = 0;
+
+    try {
+      for (let index = 0; index < count; index += 1) {
+        const response = await fetch(`${apiBase}/api/user/proxy-entries`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session?.token ?? ""}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            targetCountry: entryForm.targetCountry,
+            targetRegion: entryForm.targetRegion.trim() || undefined,
+            targetCity: entryForm.targetCity.trim() || undefined
+          })
+        });
+        const body = (await response.json()) as CreatedProxyResponse | { error?: string };
+        if (!response.ok || !("ok" in body) || !body.ok) {
+          failed += 1;
+          if (copies.length === 0) throw new Error("error" in body && body.error ? body.error : "生成代理失败");
+          break;
+        }
+        copies.push(body.clientProxy.copyText);
+      }
+
+      setCreatedCopies(copies);
+      setNotice(`已生�?${copies.length} 条代�?{failed > 0 ? `�?{failed} 条因库存不足未生成` : ""}。密码只显示这一次。`);
+      await loadAll();
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "生成代理失败");
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function createAdminEntries(form: EntryFormState): Promise<CreateProxyEntryResult | null> {
+    setIsSaving(true);
+    setError(null);
+    setNotice(null);
+    setCreatedCopies([]);
+
+    const count = Math.max(1, Math.min(20, Number(form.count || 1)));
+    const copies: string[] = [];
+    let failed = 0;
+    const userId = Number(form.userId || 0);
+
+    try {
+      for (let index = 0; index < count; index += 1) {
+        const response = await fetch(`${apiBase}/api/admin/proxy-entries`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${session?.token ?? ""}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            userId,
+            targetCountry: form.targetCountry,
+            targetRegion: form.targetRegion.trim() || undefined,
+            targetCity: form.targetCity.trim() || undefined
+          })
+        });
+        const body = (await response.json()) as CreatedProxyResponse | { error?: string; ok?: false };
+        if (!response.ok || ("ok" in body && body.ok === false)) {
+          failed += 1;
+          if (copies.length === 0) throw new Error("error" in body && body.error ? body.error : "创建代理失败");
+          break;
+        }
+        if (!("clientProxy" in body)) {
+          failed += 1;
+          if (copies.length === 0) throw new Error("创建代理失败");
+          break;
+        }
+        copies.push(body.clientProxy.copyText);
+      }
+
+      setCreatedCopies(copies);
+      setNotice(`已生�?${copies.length} 条代�?{failed > 0 ? `，另�?${failed} 条因库存不足未生成` : ""}。密码只显示这一回。`);
+      await loadAll();
+      return { copies, failed };
+    } catch (createError) {
+      setError(createError instanceof Error ? createError.message : "创建代理失败");
+      return null;
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function copyText(text: string, successMessage: string) {
+    setError(null);
+    try {
+      await navigator.clipboard.writeText(text);
+      setNotice(successMessage);
+    } catch {
+      setNotice(null);
+      setError("复制失败，请手动复制这段内容�?);
+    }
+  }
+
+  return (
+    <main className="app-shell">
+      <Header
+        surface={appSurface}
+        onLogout={session ? logout : undefined}
+        onRefresh={() => void refreshAll()}
+        isLoading={isLoading || !session}
+        lastLoadedAt={lastLoadedAt}
+        username={session?.user.username}
+      />
+      <Messages error={error} notice={notice} />
+
+      {!session ? (
+        <LoginPanel form={loginForm} isSaving={isSaving} onSubmit={login} setForm={setLoginForm} surface={appSurface} />
+      ) : appSurface === "admin" ? (
+        <AdminApp
+          activeEntries={activeEntries}
+          activePage={adminPage}
+          activeUsers={activeUsers}
+          copyText={copyText}
+          createAdminEntries={createAdminEntries}
+          createUser={createUser}
+          entries={entries}
+          entryStats={entryStats}
+          importResult={importResult}
+          importUpstreams={importUpstreams}
+          isLoading={isLoading}
+          isSaving={isSaving}
+          monthTraffic={monthTraffic}
+          operationLogs={operationLogs}
+          onOpenAdminReadOnlyPage={openAdminReadOnlyPage}
+          readOnlyIntent={adminReadOnlyIntent}
+          resetUserPassword={resetUserPassword}
+          regions={regions}
+          setActivePage={setAdminPage}
+          setReadOnlyIntent={setAdminReadOnlyIntent}
+          setUpstreamText={setUpstreamText}
+          setUserForm={setUserForm}
+          todayTraffic={todayTraffic}
+          trafficRows={trafficRows}
+          upstreamStats={upstreamStats}
+          upstreamText={upstreamText}
+          upstreams={upstreams}
+          systemConfig={systemConfig}
+          updateProxyEntryStatus={updateProxyEntryStatus}
+          updateUserSettings={updateUserSettings}
+          userForm={userForm}
+          users={users}
+        />
+      ) : (
+        <UserApp
+          activePage={userPage}
+          copyText={copyText}
+          createEntries={createEntries}
+          createdCopies={createdCopies}
+          entries={entries}
+          form={entryForm}
+          isSaving={isSaving}
+          selectedUser={currentUser}
+          setActivePage={setUserPage}
+          setForm={setEntryForm}
+          trafficRows={trafficRows}
+        />
+      )}
+    </main>
+  );
+}
+
+function Header(props: {
+  surface: AppMode;
+  isLoading: boolean;
+  lastLoadedAt: Date | null;
+  onLogout?: () => void;
+  onRefresh: () => void;
+  username?: string;
+}) {
+  return (
+    <header className="topbar">
+      <div>
+        <p className="eyebrow">UX-113</p>
+        <h1>{props.surface === "admin" ? "管理员后�? : "用户面板"}</h1>
+        <p className="subtitle">
+          {props.surface === "admin"
+            ? "健康总览、用户、上游资源、地区库存、代理运行、日志和设置�?
+            : "额度总览、生成代理、我的代理和流量记录�?}
+        </p>
+      </div>
+      <div className="topbar-actions">
+        {props.username && (
+          <span className="refresh-status">
+            {props.isLoading
+              ? "刷新�?.."
+              : props.lastLoadedAt
+                ? `最后刷�?${formatRefreshTime(props.lastLoadedAt)}`
+                : "等待刷新"}
+          </span>
+        )}
+        <button className="refresh-button" type="button" onClick={props.onRefresh} disabled={props.isLoading} title="刷新" aria-label="刷新">
+          �?        </button>
+      </div>
+    </header>
+  );
+}
+
+function LoginPanel(props: {
+  form: LoginFormState;
+  isSaving: boolean;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  setForm: (form: LoginFormState) => void;
+  surface: AppMode;
+}) {
+  return (
+    <section className="login-shell">
+      <form className="login-panel" onSubmit={props.onSubmit}>
+        <div className="section-heading">
+          <h2>{props.surface === "admin" ? "管理员登�? : "用户登录"}</h2>
+          <span>{props.surface === "admin" ? "访问后台管理功能" : "访问自己的代理和流量"}</span>
+        </div>
+        <div className="hint-list">
+          <span>{props.surface === "admin" ? "请使用管理员账号登录后台；普通用户账号不能进入管理员页面�? : "请使用管理员发给你的普通用户账号登录，只能查看你自己的代理和流量�?}</span>
+          <span>{props.surface === "admin" ? "如果管理员密码忘记了，请先回到项目保存的安全记录处理；不要在这里猜密码�? : "如果忘记密码，请联系管理员重置；系统不会显示旧密码�?}</span>
+        </div>
+        <label>
+          用户�?          <span className="field-note">输入登录账号的用户名，不是备注名�?/span>
+          <input
+            autoComplete="username"
+            value={props.form.username}
+            onChange={(event) => props.setForm({ ...props.form, username: event.target.value })}
+          />
+        </label>
+        <label>
+          密码
+          <span className="field-note">输入当前密码；密码输错时请重新检查大小写和空格�?/span>
+          <input
+            autoComplete="current-password"
+            type="password"
+            value={props.form.password}
+            onChange={(event) => props.setForm({ ...props.form, password: event.target.value })}
+          />
+        </label>
+        <button className="primary-button" disabled={props.isSaving} type="submit">
+          登录
+        </button>
+      </form>
+    </section>
+  );
+}
+
+function AdminApp(props: {
+  activeEntries: number;
+  activePage: AdminPage;
+  activeUsers: number;
+  copyText: (text: string, successMessage: string) => Promise<void>;
+  createAdminEntries: (form: EntryFormState) => Promise<CreateProxyEntryResult | null>;
+  createUser: (event: FormEvent<HTMLFormElement>) => Promise<CreateUserResult | null>;
+  entries: ProxyEntry[];
+  entryStats: Record<string, number>;
+  importResult: UpstreamImportResponse | null;
+  importUpstreams: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  isLoading: boolean;
+  isSaving: boolean;
+  monthTraffic: number;
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams" | "users", options: { country?: string | null; search?: string }) => void;
+  operationLogs: OperationLog[];
+  readOnlyIntent: AdminReadOnlyIntent | null;
+  resetUserPassword: (userId: number, password: string) => Promise<ResetUserPasswordResponse>;
+  regions: RegionInventory[];
+  setActivePage: (page: AdminPage) => void;
+  setReadOnlyIntent: (intent: AdminReadOnlyIntent | null) => void;
+  setUpstreamText: (text: string) => void;
+  setUserForm: (form: UserFormState) => void;
+  todayTraffic: number;
+  trafficRows: TrafficDaily[];
+  upstreamStats: Record<string, number>;
+  upstreamText: string;
+  upstreams: UpstreamProxy[];
+  systemConfig: SystemConfig | null;
+  updateProxyEntryStatus: (entryId: number, status: "active" | "disabled") => Promise<UpdateProxyEntryStatusResponse>;
+  updateUserSettings: (userId: number, form: UserSettingsFormState) => Promise<UpdateUserResponse>;
+  userForm: UserFormState;
+  users: AdminUser[];
+}) {
+  return (
+    <section className="workspace">
+      <Navigation label="管理员后台导�?>
+        <NavButton active={props.activePage === "dashboard"} onClick={() => props.setActivePage("dashboard")}>总览</NavButton>
+        <NavButton active={props.activePage === "users"} onClick={() => props.setActivePage("users")}>用户管理</NavButton>
+        <NavButton active={props.activePage === "upstreams"} onClick={() => props.setActivePage("upstreams")}>上游资源</NavButton>
+        <NavButton active={props.activePage === "geo"} onClick={() => props.setActivePage("geo")}>地区库存</NavButton>
+        <NavButton active={props.activePage === "proxies"} onClick={() => props.setActivePage("proxies")}>代理运行</NavButton>
+        <NavButton active={props.activePage === "logs"} onClick={() => props.setActivePage("logs")}>日志</NavButton>
+        <NavButton active={props.activePage === "settings"} onClick={() => props.setActivePage("settings")}>设置</NavButton>
+      </Navigation>
+
+      <section className="content">
+        {props.activePage === "dashboard" && (
+          <AdminDashboard
+            activeEntries={props.activeEntries}
+            activeUsers={props.activeUsers}
+            entryStats={props.entryStats}
+            monthTraffic={props.monthTraffic}
+            regions={props.regions}
+            todayTraffic={props.todayTraffic}
+            trafficRows={props.trafficRows}
+            upstreamStats={props.upstreamStats}
+            upstreams={props.upstreams}
+            users={props.users}
+            onNavigate={props.setActivePage}
+          />
+        )}
+        {props.activePage === "users" && (
+          <AdminUsers
+            copyText={props.copyText}
+            createAdminEntries={props.createAdminEntries}
+            createUser={props.createUser}
+            isLoading={props.isLoading}
+            isSaving={props.isSaving}
+            onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage}
+            readOnlyIntent={props.readOnlyIntent?.page === "users" ? props.readOnlyIntent : null}
+            resetUserPassword={props.resetUserPassword}
+            setReadOnlyIntent={props.setReadOnlyIntent}
+            setUserForm={props.setUserForm}
+            updateUserSettings={props.updateUserSettings}
+            userForm={props.userForm}
+            users={props.users}
+          />
+        )}
+        {props.activePage === "upstreams" && (
+          <AdminUpstreams
+            importResult={props.importResult}
+            importUpstreams={props.importUpstreams}
+            isSaving={props.isSaving}
+            onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage}
+            readOnlyIntent={props.readOnlyIntent?.page === "upstreams" ? props.readOnlyIntent : null}
+            setReadOnlyIntent={props.setReadOnlyIntent}
+            setUpstreamText={props.setUpstreamText}
+            upstreamStats={props.upstreamStats}
+            upstreamText={props.upstreamText}
+            upstreams={props.upstreams}
+          />
+        )}
+        {props.activePage === "geo" && <AdminGeo onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage} regions={props.regions} />}
+        {props.activePage === "proxies" && (
+          <AdminProxies
+            entries={props.entries}
+            isSaving={props.isSaving}
+            onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage}
+            readOnlyIntent={props.readOnlyIntent?.page === "proxies" ? props.readOnlyIntent : null}
+            setReadOnlyIntent={props.setReadOnlyIntent}
+            updateProxyEntryStatus={props.updateProxyEntryStatus}
+          />
+        )}
+        {props.activePage === "logs" && (
+          <AdminLogs
+            operationLogs={props.operationLogs}
+            readOnlyIntent={props.readOnlyIntent?.page === "logs" ? props.readOnlyIntent : null}
+            setReadOnlyIntent={props.setReadOnlyIntent}
+            upstreams={props.upstreams}
+          />
+        )}
+        {props.activePage === "settings" && <AdminSettingsReadOnlyConfig copyText={props.copyText} systemConfig={props.systemConfig} />}
+      </section>
+    </section>
+  );
+}
+
+function AdminDashboard(props: {
+  activeEntries: number;
+  activeUsers: number;
+  entryStats: Record<string, number>;
+  monthTraffic: number;
+  regions: RegionInventory[];
+  todayTraffic: number;
+  trafficRows: TrafficDaily[];
+  upstreamStats: Record<string, number>;
+  upstreams: UpstreamProxy[];
+  users: AdminUser[];
+  onNavigate: (page: AdminPage) => void;
+}) {
+  const abnormalUpstreams = (props.upstreamStats.bad ?? 0) + (props.upstreamStats.disabled ?? 0) + (props.upstreamStats.cooldown ?? 0);
+  const quotaRiskUsers = props.users.filter((user) => quotaPercent(Number(user.trafficUsedBytes), Number(user.trafficQuotaBytes)) >= 85);
+  const lowRegions = props.regions.filter((region) => region.total > 0 && region.free < 2).slice(0, 6);
+
+  return (
+    <>
+      <section className="metric-grid">
+        <Metric label="启用用户" value={`${props.activeUsers}/${props.users.length}`} />
+        <Metric label="启用代理" value={`${props.activeEntries}/${sumRecord(props.entryStats)}`} />
+        <Metric label="今日流量" value={formatBytes(String(props.todayTraffic))} />
+        <Metric label="本月流量" value={formatBytes(String(props.monthTraffic))} />
+        <Metric label="上游资源" value={String(props.upstreams.length)} />
+        <Metric label="异常上游" value={String(abnormalUpstreams)} tone={abnormalUpstreams > 0 ? "warn" : "ok"} />
+      </section>
+
+      <section className="split-grid">
+        <Panel title="数据仪表">
+          <StatusBars
+            items={[
+              { label: "空闲", value: props.upstreamStats.free ?? 0, tone: "ok" },
+              { label: "已绑�?, value: props.upstreamStats.locked ?? 0, tone: "info" },
+              { label: "冷却", value: props.upstreamStats.cooldown ?? 0, tone: "warn" },
+              { label: "失败/禁用", value: abnormalUpstreams, tone: "bad" }
+            ]}
+          />
+        </Panel>
+
+        <Panel title="�?7 日流�?>
+          <TrafficBars rows={props.trafficRows} />
+        </Panel>
+      </section>
+
+      <section className="split-grid">
+        <Panel title="待处理事�?>
+          <div className="task-list">
+            <button type="button" onClick={() => props.onNavigate("upstreams")}>
+              <span>异常上游</span>
+              <strong>{abnormalUpstreams}</strong>
+            </button>
+            <button type="button" onClick={() => props.onNavigate("geo")}>
+              <span>低库存地�?/span>
+              <strong>{lowRegions.length}</strong>
+            </button>
+            <button type="button" onClick={() => props.onNavigate("users")}>
+              <span>额度风险用户</span>
+              <strong>{quotaRiskUsers.length}</strong>
+            </button>
+            <button type="button" onClick={() => props.onNavigate("logs")}>
+              <span>操作日志</span>
+              <strong>查看</strong>
+            </button>
+          </div>
+        </Panel>
+
+        <Panel title="系统健康">
+          <HealthLine label="空闲上游" value={String(props.upstreamStats.free ?? 0)} />
+          <HealthLine label="已绑定上�? value={String(props.upstreamStats.locked ?? 0)} />
+          <HealthLine label="冷却/失败" value={String((props.upstreamStats.cooldown ?? 0) + (props.upstreamStats.bad ?? 0))} />
+          <HealthLine label="禁用代理" value={String(props.entryStats.disabled ?? 0)} />
+        </Panel>
+      </section>
+
+      <section className="split-grid">
+        <Panel title="需要关�?>
+          {quotaRiskUsers.length === 0 && lowRegions.length === 0 ? (
+            <EmptyState text="当前没有明显风险�? />
+          ) : (
+            <div className="alert-list">
+              {quotaRiskUsers.map((user) => (
+                <span key={user.id}>额度接近用完：{user.username}</span>
+              ))}
+              {lowRegions.map((region) => (
+                <span key={region.key}>库存偏低：{region.label}</span>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function AdminUsers(props: {
+  copyText: (text: string, successMessage: string) => Promise<void>;
+  createAdminEntries: (form: EntryFormState) => Promise<CreateProxyEntryResult | null>;
+  createUser: (event: FormEvent<HTMLFormElement>) => Promise<CreateUserResult | null>;
+  isLoading: boolean;
+  isSaving: boolean;
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams" | "users", options: { country?: string | null; search?: string }) => void;
+  readOnlyIntent: AdminReadOnlyIntent | null;
+  resetUserPassword: (userId: number, password: string) => Promise<ResetUserPasswordResponse>;
+  setReadOnlyIntent: (intent: AdminReadOnlyIntent | null) => void;
+  setUserForm: (form: UserFormState) => void;
+  updateUserSettings: (userId: number, form: UserSettingsFormState) => Promise<UpdateUserResponse>;
+  userForm: UserFormState;
+  users: AdminUser[];
+}) {
+  const [showCreate, setShowCreate] = useState(false);
+  const [createResult, setCreateResult] = useState<CreateUserResult | null>(null);
+  const [entryResult, setEntryResult] = useState<CreateProxyEntryResult | null>(null);
+  const [entryForm, setEntryForm] = useState<EntryFormState>({
+    userId: "",
+    targetCountry: "us",
+    targetRegion: "",
+    targetCity: "",
+    count: "1"
+  });
+  const [editUser, setEditUser] = useState<AdminUser | null>(null);
+  const [editForm, setEditForm] = useState<UserSettingsFormState>({
+    status: "active",
+    trafficQuotaGb: "0",
+    maxProxyEntries: "10",
+    allowedCountries: countries.map((country) => country.value)
+  });
+  const [resetUser, setResetUser] = useState<AdminUser | null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetResult, setResetResult] = useState<ResetUserPasswordResponse | null>(null);
+  const [selectedUserId, setSelectedUserId] = useState<number | null>(props.users[0]?.id ?? null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const filteredUsers = props.users.filter((user) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      user.username.toLowerCase().includes(query) ||
+      user.role.toLowerCase().includes(query) ||
+      String(user.id).includes(query);
+    const matchesStatus = statusFilter === "all" || user.status === statusFilter;
+    return matchesSearch && matchesStatus;
+  });
+  const pagedUsers = usePagedRows(filteredUsers, 8);
+  const selectedUser = filteredUsers.find((user) => user.id === selectedUserId) ?? filteredUsers[0] ?? null;
+  const quotaRiskUsers = props.users.filter((user) => quotaPercent(Number(user.trafficUsedBytes), Number(user.trafficQuotaBytes)) >= 85);
+  const hasFilters = Boolean(search.trim()) || statusFilter !== "all";
+
+  useEffect(() => {
+    if (!props.readOnlyIntent) return;
+    if (props.readOnlyIntent.search) setSearch(props.readOnlyIntent.search);
+    setStatusFilter("all");
+    props.setReadOnlyIntent(null);
+  }, [props.readOnlyIntent, props.setReadOnlyIntent]);
+
+  useEffect(() => {
+    if (!selectedUser) return;
+    const allowedCountries =
+      selectedUser.allowedCountries && selectedUser.allowedCountries.length > 0
+        ? selectedUser.allowedCountries
+        : countries.map((country) => country.value);
+    setEntryResult(null);
+    setEntryForm((current) => ({
+      ...current,
+      userId: String(selectedUser.id),
+      targetCountry: allowedCountries.includes(current.targetCountry) ? current.targetCountry : allowedCountries[0] ?? "us"
+    }));
+  }, [selectedUser]);
+
+  async function submitPasswordReset(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!resetUser) return;
+
+    const result = await props.resetUserPassword(resetUser.id, resetPassword);
+    if (result.ok) {
+      setResetPassword("");
+      setResetResult(result);
+    }
+  }
+
+  async function submitCreateUser(event: FormEvent<HTMLFormElement>) {
+    const result = await props.createUser(event);
+    if (result) {
+      setCreateResult(result);
+      setSelectedUserId(result.user.id);
+    }
+  }
+
+  async function submitCreateEntry(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedUser) return;
+    const result = await props.createAdminEntries({
+      ...entryForm,
+      userId: String(selectedUser.id)
+    });
+    if (result) {
+      setEntryResult(result);
+    }
+  }
+
+  async function submitUserSettings(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!editUser) return;
+
+    const result = await props.updateUserSettings(editUser.id, editForm);
+    if (result.ok) {
+      setSelectedUserId(editUser.id);
+      setEditUser(null);
+    }
+  }
+
+  function openUserSettings(user: AdminUser) {
+    setEditUser(user);
+    setEditForm({
+      status: user.status,
+      trafficQuotaGb: bytesToGbInput(user.trafficQuotaBytes),
+      maxProxyEntries: String(user.maxProxyEntries),
+      allowedCountries:
+        user.allowedCountries && user.allowedCountries.length > 0
+          ? user.allowedCountries
+          : countries.map((country) => country.value)
+    });
+  }
+
+  function openPasswordReset(user: AdminUser) {
+    setResetUser(user);
+    setResetPassword("");
+    setResetResult(null);
+  }
+
+  function closeCreateUser() {
+    setShowCreate(false);
+    setCreateResult(null);
+  }
+
+  function closePasswordReset() {
+    setResetUser(null);
+    setResetPassword("");
+    setResetResult(null);
+  }
+
+  return (
+    <>
+      <section className="metric-grid compact">
+        <Metric label="总用�? value={String(props.users.length)} />
+        <Metric label="启用用户" value={String(props.users.filter((user) => user.status === "active").length)} />
+        <Metric label="停用用户" value={String(props.users.filter((user) => user.status === "disabled").length)} />
+        <Metric label="额度风险" value={String(quotaRiskUsers.length)} tone={quotaRiskUsers.length > 0 ? "warn" : undefined} />
+        <Metric label="代理总数" value={String(props.users.reduce((total, user) => total + user.proxyEntryCount, 0))} />
+      </section>
+
+      <section className="action-strip">
+        <div>
+          <h2>用户管理工作�?/h2>
+          <p>先看用户健康和额度风险，再查看单个用户详情。新建用户收进弹窗，避免管理页变成表单页�?/p>
+        </div>
+        <button className="primary-button" type="button" onClick={() => setShowCreate(true)}>
+          新建用户
+        </button>
+      </section>
+
+      <section className="master-detail">
+        <Panel title="用户管理" count={filteredUsers.length} loading={props.isLoading}>
+          <div className="hint-list">
+            <span>搜索可以输入用户 ID、用户名或角色；状态筛选只会保留对应状态的用户�?/span>
+          </div>
+          <div className="table-tools">
+            <label>
+              搜索
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID、用户名、角�? />
+            </label>
+            <label>
+              状�?              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="all">全部状�?/option>
+                <option value="active">启用</option>
+                <option value="disabled">停用</option>
+              </select>
+            </label>
+            {hasFilters && (
+              <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); }}>重置筛�?/button>
+            )}
+          </div>
+          <ActiveFilters
+            items={[
+              { label: "搜索", value: search.trim() || null, onClear: search.trim() ? () => setSearch("") : null },
+              { label: "状�?, value: statusFilter === "all" ? null : statusLabel(statusFilter), onClear: statusFilter === "all" ? null : () => setStatusFilter("all") }
+            ]}
+          />
+          <FilterSummary shown={filteredUsers.length} total={props.users.length} />
+          <DataTable minWidth={760} maxHeight={500}>
+            <thead>
+              <tr>
+                <th>用户</th>
+                <th>状�?/th>
+                <th>已用流量</th>
+                <th>剩余额度</th>
+                <th>代理�?/th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedUsers.rows.map((user) => (
+                <tr className={selectedUser?.id === user.id ? "selected-row" : undefined} key={user.id}>
+                  <td><strong>{user.username}</strong></td>
+                  <td><Status status={user.status} /></td>
+                  <td>{formatBytes(user.trafficUsedBytes)}</td>
+                  <td>{formatRemaining(user.trafficQuotaBytes, user.trafficUsedBytes)}</td>
+                  <td>{user.proxyEntryCount}/{user.maxProxyEntries}</td>
+                  <td>
+                    <ActionRow>
+                      <button type="button" onClick={() => setSelectedUserId(user.id)}>查看</button>
+                      <button type="button" disabled={user.role !== "user"} onClick={() => openUserSettings(user)}>编辑设置</button>
+                      <button type="button" disabled={user.role !== "user"} onClick={() => openPasswordReset(user)}>重置密码</button>
+                    </ActionRow>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+          <Pagination page={pagedUsers.page} totalPages={pagedUsers.totalPages} onPageChange={pagedUsers.setPage} />
+          <FilteredEmptyState
+            emptyText="暂无用户�?
+            filteredText="没有符合条件的用�?
+            shown={filteredUsers.length}
+            total={props.users.length}
+          />
+        </Panel>
+
+        <UserDetail
+          user={selectedUser}
+          onEditUser={openUserSettings}
+          onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage}
+          onResetPassword={openPasswordReset}
+        />
+      </section>
+
+      {selectedUser && (
+        <Panel title={`�?${selectedUser.username} 创建代理`} count={entryResult?.copies.length ?? 0}>
+          {entryResult?.copies.length ? (
+            <>
+              <ProxyCopyGuide passwordText="代理密码只显示这一次，关闭或刷新后不能再次查看�? />
+              <div className="copy-toolbar">
+                <button type="button" onClick={() => props.copyText(entryResult.copies.join("\n"), `已复�?${entryResult.copies.length} 条代理，请立即保存。`)}>
+                  复制全部
+                </button>
+              </div>
+              <div className="copy-list">
+                {entryResult.copies.map((copy) => {
+                  const parsedCopy = parseClientProxyCopy(copy);
+                  return (
+                    <div className="copy-row" key={copy}>
+                      <div className="copy-content">
+                        <code>{copy}</code>
+                        {parsedCopy && (
+                          <div className="copy-meta">
+                            <span><strong>主机</strong><code>{parsedCopy.host}</code></span>
+                            <span><strong>端口</strong><code>{parsedCopy.port}</code></span>
+                            <span><strong>用户�?/strong><code>{parsedCopy.username}</code></span>
+                            <span><strong>密码</strong><code>{parsedCopy.password}</code></span>
+                          </div>
+                        )}
+                      </div>
+                      <button type="button" onClick={() => props.copyText(copy, "已复制代理，请立即保存�?)}>复制代理</button>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
+          ) : (
+            <form className="form-surface" onSubmit={submitCreateEntry}>
+              <div className="section-heading">
+                <h2>创建代理</h2>
+                <span>{selectedUser.username}</span>
+              </div>
+              <div className="hint-list">
+                <span>这里会直接为当前选中的用户创建代理，密码仍然只会显示一次�?/span>
+              </div>
+              <AdminSelectedUserEntryForm
+                allowedCountries={
+                  selectedUser.allowedCountries && selectedUser.allowedCountries.length > 0
+                    ? countries.filter((country) => selectedUser.allowedCountries?.includes(country.value))
+                    : countries
+                }
+                form={entryForm}
+                isSaving={props.isSaving}
+                setForm={setEntryForm}
+              />
+            </form>
+          )}
+        </Panel>
+      )}
+
+      {showCreate && (
+        <Modal title="新建用户" onClose={closeCreateUser}>
+          {createResult?.initialPassword ? (
+            <div className="modal-form">
+              <div className="section-heading">
+                <h2>初始密码只显示这一�?/h2>
+                <span>{createResult.user.username}</span>
+              </div>
+              <div className="copy-row">
+                <code>{createResult.initialPassword}</code>
+                <button type="button" onClick={() => void props.copyText(createResult.initialPassword, "已复制初始密码，请立即保存�?)}>
+                  复制初始密码
+                </button>
+              </div>
+              <p className="empty-state">请现在保存这个初始密码。关闭窗口后，系统不会再次显示这串明文密码�?/p>
+              <div className="modal-actions">
+                <button className="primary-button" type="button" onClick={closeCreateUser}>我已保存</button>
+              </div>
+            </div>
+          ) : (
+            <form className="modal-form" onSubmit={submitCreateUser}>
+              <div className="form-grid three">
+                <label>
+                  用户�?                  <span className="field-note">登录时会用这个名字，建议用容易区分的英文或数字�?/span>
+                  <input
+                    value={props.userForm.username}
+                    onChange={(event) => props.setUserForm({ ...props.userForm, username: event.target.value })}
+                    placeholder="tom"
+                  />
+                </label>
+                <label>
+                  初始密码
+                  <span className="field-note">可不填；留空后系统会自动生成一个新密码，并且只显示一次�?/span>
+                  <input
+                    autoComplete="new-password"
+                    minLength={8}
+                    type="text"
+                    value={props.userForm.password}
+                    onChange={(event) => props.setUserForm({ ...props.userForm, password: event.target.value })}
+                    placeholder="不填则自动生�?
+                  />
+                </label>
+                <label>
+                  总额�?GB
+                  <span className="field-note">�?0 表示不限流量；填其他数字表示这个用户总共能用多少 GB�?/span>
+                  <input
+                    min="0"
+                    type="number"
+                    value={props.userForm.trafficQuotaGb}
+                    onChange={(event) => props.setUserForm({ ...props.userForm, trafficQuotaGb: event.target.value })}
+                  />
+                </label>
+                <label>
+                  代理上限
+                  <span className="field-note">表示这个用户最多能同时拥有多少条代理�?/span>
+                  <input
+                    min="1"
+                    max="100"
+                    type="number"
+                    value={props.userForm.maxProxyEntries}
+                    onChange={(event) => props.setUserForm({ ...props.userForm, maxProxyEntries: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div className="country-picker">
+                <span className="country-picker-title">允许国家</span>
+                <span className="field-note">至少保留 1 个国家。这里勾选哪些国家，这个用户之后就只能生成这些国家的代理�?/span>
+                <div className="country-checkbox-grid">
+                  {countries.map((country) => {
+                    const checked = props.userForm.allowedCountries.includes(country.value);
+                    return (
+                      <label className="country-checkbox" key={country.value}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(event) => {
+                            const next = event.target.checked
+                              ? [...props.userForm.allowedCountries, country.value]
+                              : props.userForm.allowedCountries.filter((value) => value !== country.value);
+                            props.setUserForm({ ...props.userForm, allowedCountries: next });
+                          }}
+                        />
+                        <span>{country.label}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+              <div className="modal-actions">
+                <button type="button" onClick={closeCreateUser}>取消</button>
+                <button
+                  className="primary-button"
+                  type="submit"
+                  disabled={props.isSaving || !props.userForm.username.trim() || props.userForm.allowedCountries.length < 1}
+                >
+                  新建用户
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
+
+      {editUser && (
+        <Modal title="编辑用户设置" onClose={() => setEditUser(null)}>
+          <form className="modal-form" onSubmit={submitUserSettings}>
+            <div className="section-heading">
+              <h2>{editUser.username}</h2>
+              <span>只调整普通用户的启用状态、总额度和代理上限�?/span>
+            </div>
+            <div className="form-grid three">
+              <label>
+                状�?                <span className="field-note">启用后用户可以正常登录和使用；停用后用户不能继续使用�?/span>
+                <select value={editForm.status} onChange={(event) => setEditForm({ ...editForm, status: event.target.value })}>
+                  <option value="active">启用</option>
+                  <option value="disabled">停用</option>
+                </select>
+              </label>
+              <label>
+                总额�?GB
+                <span className="field-note">�?0 表示不限流量；填其他数字表示这个用户总共还能按这个上限使用�?/span>
+                <input
+                  min="0"
+                  step="0.01"
+                  type="number"
+                  value={editForm.trafficQuotaGb}
+                  onChange={(event) => setEditForm({ ...editForm, trafficQuotaGb: event.target.value })}
+                />
+              </label>
+              <label>
+                代理上限
+                <span className="field-note">表示这个用户最多能同时保留多少条代理�?/span>
+                <input
+                  min="1"
+                  max="100"
+                  type="number"
+                  value={editForm.maxProxyEntries}
+                  onChange={(event) => setEditForm({ ...editForm, maxProxyEntries: event.target.value })}
+                />
+              </label>
+            </div>
+            <div className="country-picker">
+              <span className="country-picker-title">允许国家</span>
+              <span className="field-note">至少保留 1 个国家。这里勾选哪些国家，用户端就只能生成这些国家的代理�?/span>
+              <div className="country-checkbox-grid">
+                {countries.map((country) => {
+                  const checked = editForm.allowedCountries.includes(country.value);
+                  return (
+                    <label className="country-checkbox" key={country.value}>
+                      <input
+                        type="checkbox"
+                        checked={checked}
+                        onChange={(event) => {
+                          const next = event.target.checked
+                            ? [...editForm.allowedCountries, country.value]
+                            : editForm.allowedCountries.filter((value) => value !== country.value);
+                          setEditForm({ ...editForm, allowedCountries: next });
+                        }}
+                      />
+                      <span>{country.label}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+            <p className="empty-state">保存后会写入管理员操作日志；不会显示或保存任何明文密码�?/p>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setEditUser(null)}>取消</button>
+              <button
+                className="primary-button"
+                type="submit"
+                disabled={
+                  props.isSaving ||
+                  !["active", "disabled"].includes(editForm.status) ||
+                  Number(editForm.trafficQuotaGb) < 0 ||
+                  editForm.allowedCountries.length < 1 ||
+                  Number(editForm.maxProxyEntries) < 1 ||
+                  Number(editForm.maxProxyEntries) > 100
+                }
+              >
+                保存设置
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+
+      {resetUser && (
+        <Modal title="重置用户密码" onClose={closePasswordReset}>
+          {resetResult?.newPassword ? (
+            <div className="modal-form">
+              <div className="section-heading">
+                <h2>新密码只显示这一�?/h2>
+                <span>{resetUser.username}</span>
+              </div>
+              <div className="copy-row">
+                <code>{resetResult.newPassword}</code>
+                <button type="button" onClick={() => void props.copyText(resetResult.newPassword ?? "", "已复制新密码，请立即保存�?)}>
+                  复制新密�?                </button>
+              </div>
+              <p className="empty-state">请现在保存这个新密码。关闭窗口后，系统不会再显示这串明文密码�?/p>
+              <div className="modal-actions">
+                <button className="primary-button" type="button" onClick={closePasswordReset}>我已保存</button>
+              </div>
+            </div>
+          ) : (
+            <form className="modal-form" onSubmit={submitPasswordReset}>
+              <div className="section-heading">
+                <h2>{resetUser.username}</h2>
+                <span>手填新密码，或留空自动生�?/span>
+              </div>
+              <label>
+                新密�?                <span className="field-note">可不填；留空后系统会自动生成一个新密码。手动填写时至少 8 位�?/span>
+                <input
+                  autoComplete="new-password"
+                  minLength={8}
+                  type="text"
+                  value={resetPassword}
+                  onChange={(event) => setResetPassword(event.target.value)}
+                  placeholder="不填则系统自动生�?
+                />
+              </label>
+              <div className="modal-actions">
+                <button type="button" onClick={closePasswordReset}>取消</button>
+                <button className="primary-button" type="submit" disabled={props.isSaving || (resetPassword.length > 0 && resetPassword.trim().length < 8)}>
+                  确认重置
+                </button>
+              </div>
+            </form>
+          )}
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function UserDetail(props: {
+  user: AdminUser | null;
+  onEditUser: (user: AdminUser) => void;
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams", options: { country?: string | null; search?: string }) => void;
+  onResetPassword: (user: AdminUser) => void;
+}) {
+  if (!props.user) {
+    return (
+      <Panel title="用户详情">
+        <EmptyState text="请选择一个用户�? />
+      </Panel>
+    );
+  }
+
+  const user = props.user;
+
+  return (
+    <aside className="detail-panel">
+      <div className="section-heading">
+        <h2>用户详情</h2>
+        <Status status={user.status} />
+      </div>
+      <div className="detail-title">
+        <strong>{user.username}</strong>
+        <span>用户 ID #{user.id}</span>
+      </div>
+      <div className="detail-grid">
+        <DetailItem label="已用流量" value={formatBytes(user.trafficUsedBytes)} />
+        <DetailItem label="总额�? value={formatQuota(user.trafficQuotaBytes)} />
+        <DetailItem label="剩余额度" value={formatRemaining(user.trafficQuotaBytes, user.trafficUsedBytes)} />
+        <DetailItem label="代理数量" value={`${user.proxyEntryCount}/${user.maxProxyEntries}`} />
+        <DetailItem label="并发上限" value={String(user.maxConcurrentConnections)} />
+        <DetailItem
+          label="允许国家"
+          value={formatAllowedCountries(user.allowedCountries)}
+        />
+        <DetailItem label="创建时间" value={formatDate(user.createdAt)} />
+      </div>
+      <div className="deferred-actions">
+        <p>这里可以直接进入常用管理动作。删除仍然属于危险操作，先保持禁用�?/p>
+        <ActionRow>
+          <button type="button" onClick={() => props.onOpenAdminReadOnlyPage("proxies", { search: user.username })}>查看代理</button>
+          <button type="button" onClick={() => props.onOpenAdminReadOnlyPage("logs", { search: user.username })}>查看日志</button>
+          <button type="button" onClick={() => props.onEditUser(user)}>编辑设置</button>
+          <button type="button" onClick={() => props.onResetPassword(user)}>重置密码</button>
+          <DisabledAction label="删除" />
+        </ActionRow>
+      </div>
+    </aside>
+  );
+}
+
+function AdminUpstreams(props: {
+  importResult: UpstreamImportResponse | null;
+  importUpstreams: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  isSaving: boolean;
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams", options: { country?: string | null; search?: string }) => void;
+  readOnlyIntent: AdminReadOnlyIntent | null;
+  setReadOnlyIntent: (intent: AdminReadOnlyIntent | null) => void;
+  setUpstreamText: (text: string) => void;
+  upstreamStats: Record<string, number>;
+  upstreamText: string;
+  upstreams: UpstreamProxy[];
+}) {
+  const [showImport, setShowImport] = useState(false);
+  const [selectedUpstreamId, setSelectedUpstreamId] = useState<number | null>(props.upstreams[0]?.id ?? null);
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [countryFilter, setCountryFilter] = useState("all");
+  const countriesInData = [...new Set(props.upstreams.map((upstream) => upstream.country).filter(Boolean))].sort() as string[];
+  const filteredUpstreams = props.upstreams.filter((upstream) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      upstream.host.toLowerCase().includes(query) ||
+      upstream.username.toLowerCase().includes(query) ||
+      String(upstream.id).includes(query) ||
+      (upstream.currentIp || "").toLowerCase().includes(query);
+    const matchesStatus = statusFilter === "all" || upstream.status === statusFilter;
+    const matchesCountry = countryFilter === "all" || upstream.country === countryFilter;
+    return matchesSearch && matchesStatus && matchesCountry;
+  });
+  const pagedUpstreams = usePagedRows(filteredUpstreams, 8);
+  const selectedUpstream =
+    filteredUpstreams.find((upstream) => upstream.id === selectedUpstreamId) ?? filteredUpstreams[0] ?? null;
+  const hasFilters = Boolean(search.trim()) || statusFilter !== "all" || countryFilter !== "all";
+
+  useEffect(() => {
+    if (!props.readOnlyIntent) return;
+    if (props.readOnlyIntent.search) setSearch(props.readOnlyIntent.search);
+    if (props.readOnlyIntent.country) setCountryFilter(props.readOnlyIntent.country);
+    setStatusFilter("all");
+    props.setReadOnlyIntent(null);
+  }, [props.readOnlyIntent, props.setReadOnlyIntent]);
+
+  return (
+    <>
+      <section className="metric-grid compact">
+        <Metric label="总上�? value={String(props.upstreams.length)} />
+        <Metric label="空闲" value={String(props.upstreamStats.free ?? 0)} />
+        <Metric label="已绑�? value={String(props.upstreamStats.locked ?? 0)} />
+        <Metric label="冷却" value={String(props.upstreamStats.cooldown ?? 0)} />
+        <Metric label="失败/禁用" value={String((props.upstreamStats.bad ?? 0) + (props.upstreamStats.disabled ?? 0))} />
+      </section>
+
+      <section className="split-grid">
+        <Panel title="上游状态分�?>
+          <StatusBars
+            items={[
+              { label: "空闲", value: props.upstreamStats.free ?? 0, tone: "ok" },
+              { label: "已绑�?, value: props.upstreamStats.locked ?? 0, tone: "info" },
+              { label: "冷却", value: props.upstreamStats.cooldown ?? 0, tone: "warn" },
+              { label: "失败", value: props.upstreamStats.bad ?? 0, tone: "bad" },
+              { label: "禁用", value: props.upstreamStats.disabled ?? 0, tone: "muted" }
+            ]}
+          />
+        </Panel>
+        <Panel title="国家库存">
+          <InventoryBars upstreams={props.upstreams} />
+        </Panel>
+      </section>
+
+      <section className="action-strip">
+        <div>
+          <h2>上游资源工作�?/h2>
+          <p>先看库存和异常，再用筛选定位具体上游。导入入口收进弹窗，避免页面被表单撑长�?/p>
+        </div>
+        <button className="primary-button" type="button" onClick={() => setShowImport(true)}>
+          导入上游
+        </button>
+      </section>
+
+      {props.importResult && (
+        <Panel title="最近导入结�?>
+          <div className="result-list inline">
+            <span>新增 {props.importResult.created}</span>
+            <span>重复 {props.importResult.duplicates}</span>
+            <span>失败 {props.importResult.failed}</span>
+          </div>
+        </Panel>
+      )}
+
+      <section className="master-detail">
+        <Panel title="上游资源" count={filteredUpstreams.length}>
+          <div className="hint-list">
+            <span>搜索可以输入上游 ID、host、用户名或出�?IP；状态和国家筛选可以一起用�?/span>
+          </div>
+          <div className="table-tools">
+            <label>
+              搜索
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID、host、用户名、出�?IP" />
+            </label>
+            <label>
+              状�?              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="all">全部状�?/option>
+                <option value="free">空闲</option>
+                <option value="locked">已绑�?/option>
+                <option value="cooldown">冷却</option>
+                <option value="bad">失败</option>
+                <option value="disabled">禁用</option>
+              </select>
+            </label>
+            <label>
+              国家
+              <select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}>
+                <option value="all">全部国家</option>
+                {countriesInData.map((country) => (
+                  <option key={country} value={country}>{country.toUpperCase()}</option>
+                ))}
+              </select>
+            </label>
+            {hasFilters && (
+              <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); setCountryFilter("all"); }}>重置筛�?/button>
+            )}
+          </div>
+          <ActiveFilters
+            items={[
+              { label: "搜索", value: search.trim() || null, onClear: search.trim() ? () => setSearch("") : null },
+              { label: "状�?, value: statusFilter === "all" ? null : statusLabel(statusFilter), onClear: statusFilter === "all" ? null : () => setStatusFilter("all") },
+              { label: "国家", value: countryFilter === "all" ? null : countryFilter.toUpperCase(), onClear: countryFilter === "all" ? null : () => setCountryFilter("all") }
+            ]}
+          />
+          <FilterSummary shown={filteredUpstreams.length} total={props.upstreams.length} />
+          <DataTable minWidth={760} maxHeight={500}>
+            <thead>
+              <tr>
+                <th>ID</th>
+                <th>上游</th>
+                <th>状�?/th>
+                <th>出口 IP</th>
+                <th>地区</th>
+                <th>延迟</th>
+                <th>最后检�?/th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedUpstreams.rows.map((upstream) => (
+                <tr className={selectedUpstream?.id === upstream.id ? "selected-row" : undefined} key={upstream.id}>
+                  <td>#{upstream.id}</td>
+                  <td><strong>{upstream.host}:{upstream.port}</strong></td>
+                  <td><Status status={upstream.status} /></td>
+                  <td>{upstream.currentIp || "未检�?}</td>
+                  <td>{formatLocation(upstream.country, upstream.region, upstream.city)}</td>
+                  <td>{formatLatency(upstream.latencyMs)}</td>
+                  <td>{formatDate(upstream.lastCheckedAt)}</td>
+                  <td>
+                    <button type="button" onClick={() => setSelectedUpstreamId(upstream.id)}>查看</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+          <Pagination page={pagedUpstreams.page} totalPages={pagedUpstreams.totalPages} onPageChange={pagedUpstreams.setPage} />
+          <FilteredEmptyState
+            emptyText="暂无上游资源�?
+            filteredText="没有符合筛选条件的上游资源"
+            shown={filteredUpstreams.length}
+            total={props.upstreams.length}
+          />
+        </Panel>
+
+        <UpstreamDetail onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage} upstream={selectedUpstream} />
+      </section>
+
+      {showImport && (
+        <Modal title="导入上游" onClose={() => setShowImport(false)}>
+          <form className="modal-form" onSubmit={props.importUpstreams}>
+            <label>
+              上游列表
+              <span className="field-note">一行填一条，格式固定�?`host:port:username:password`�?/span>
+              <span className="field-note">重复的上游不会重复创建；格式不对的行会记到失败结果里�?/span>
+              <textarea
+                value={props.upstreamText}
+                onChange={(event) => props.setUpstreamText(event.target.value)}
+                placeholder="host:port:username:password"
+              />
+            </label>
+            <div className="modal-actions">
+              <button type="button" onClick={() => setShowImport(false)}>取消</button>
+              <button className="primary-button" type="submit" disabled={props.isSaving || !props.upstreamText.trim()}>
+                导入上游
+              </button>
+            </div>
+          </form>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function UpstreamDetail(props: {
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams", options: { country?: string | null; search?: string }) => void;
+  upstream: UpstreamProxy | null;
+}) {
+  if (!props.upstream) {
+    return (
+      <Panel title="上游详情">
+        <EmptyState text="请选择一条上游资源�? />
+      </Panel>
+    );
+  }
+
+  return (
+    <aside className="detail-panel">
+      <div className="section-heading">
+        <h2>上游详情</h2>
+        <Status status={props.upstream.status} />
+      </div>
+      <div className="detail-title">
+        <strong>#{props.upstream.id}</strong>
+        <span>{props.upstream.host}:{props.upstream.port}</span>
+      </div>
+      <div className="detail-grid">
+        <DetailItem label="用户�? value={props.upstream.username} />
+        <DetailItem label="出口 IP" value={props.upstream.currentIp || "未检�?} />
+        <DetailItem label="地区" value={formatLocation(props.upstream.country, props.upstream.region, props.upstream.city)} />
+        <DetailItem label="延迟" value={formatLatency(props.upstream.latencyMs)} />
+        <DetailItem label="成功/失败" value={`${props.upstream.successCount}/${props.upstream.failCount}`} />
+        <DetailItem label="最后检�? value={formatDate(props.upstream.lastCheckedAt)} />
+        <DetailItem label="最后错�? value={props.upstream.lastErrorType || "�?} />
+        <DetailItem label="评分" value={String(props.upstream.score)} />
+      </div>
+      <div className="deferred-actions">
+        <p>危险操作暂缓到安全操作会话处理�?/p>
+        <ActionRow>
+          <button
+            type="button"
+            onClick={() =>
+              props.onOpenAdminReadOnlyPage("proxies", {
+                country: props.upstream?.country ?? null,
+                search: props.upstream ? String(props.upstream.id) : ""
+              })
+            }
+          >
+            查看代理
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              props.onOpenAdminReadOnlyPage("logs", {
+                search: props.upstream ? String(props.upstream.id) : ""
+              })
+            }
+          >
+            查看日志
+          </button>
+          <DisabledAction label="检�? />
+          <DisabledAction label="禁用" />
+          <DisabledAction label="删除" />
+        </ActionRow>
+      </div>
+    </aside>
+  );
+}
+
+function AdminGeo(props: { onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams", options: { country?: string | null; search?: string }) => void; regions: RegionInventory[] }) {
+  const [selectedRegionKey, setSelectedRegionKey] = useState<string | null>(props.regions[0]?.key ?? null);
+  const [search, setSearch] = useState("");
+  const [stockFilter, setStockFilter] = useState("all");
+  const filteredRegions = props.regions.filter((region) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch = !query || region.label.toLowerCase().includes(query) || region.key.toLowerCase().includes(query);
+    const matchesStock =
+      stockFilter === "all" ||
+      (stockFilter === "low" && region.free < 2) ||
+      (stockFilter === "healthy" && region.free >= 2);
+    return matchesSearch && matchesStock;
+  });
+  const pagedRegions = usePagedRows(filteredRegions, 8);
+  const selectedRegion = filteredRegions.find((region) => region.key === selectedRegionKey) ?? filteredRegions[0] ?? null;
+  const lowRegions = props.regions.filter((region) => region.free < 2);
+  const hasFilters = Boolean(search.trim()) || stockFilter !== "all";
+
+  return (
+    <>
+      <section className="metric-grid compact">
+        <Metric label="地区�? value={String(props.regions.length)} />
+        <Metric label="低库�? value={String(lowRegions.length)} tone={lowRegions.length > 0 ? "warn" : undefined} />
+        <Metric label="可用上游" value={String(props.regions.reduce((total, region) => total + region.free, 0))} />
+        <Metric label="已绑�? value={String(props.regions.reduce((total, region) => total + region.locked, 0))} />
+        <Metric label="冷却/失败" value={String(props.regions.reduce((total, region) => total + region.bad, 0))} />
+      </section>
+
+      <section className="action-strip">
+        <div>
+          <h2>地区库存工作�?/h2>
+          <p>先找低库存地区，再查看对应库存构成。检测地区等危险动作先放在详情里禁用�?/p>
+        </div>
+      </section>
+
+      <section className="master-detail">
+        <Panel title="地区库存" count={filteredRegions.length}>
+          <div className="hint-list">
+            <span>搜索可以输入国家、地区、城市或库存键；库存状态可以用来只看低库存或库存充足的地区�?/span>
+          </div>
+          <div className="table-tools">
+            <label>
+              搜索
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="国家、地区、城市、库存键" />
+            </label>
+            <label>
+              库存状�?              <select value={stockFilter} onChange={(event) => setStockFilter(event.target.value)}>
+                <option value="all">全部库存</option>
+                <option value="low">低库�?/option>
+                <option value="healthy">库存充足</option>
+              </select>
+            </label>
+            {hasFilters && (
+              <button type="button" onClick={() => { setSearch(""); setStockFilter("all"); }}>重置筛�?/button>
+            )}
+          </div>
+          <ActiveFilters
+            items={[
+              { label: "搜索", value: search.trim() || null, onClear: search.trim() ? () => setSearch("") : null },
+              { label: "库存状�?, value: stockFilter === "all" ? null : stockFilter === "low" ? "低库�? : "库存充足", onClear: stockFilter === "all" ? null : () => setStockFilter("all") }
+            ]}
+          />
+          <FilterSummary shown={filteredRegions.length} total={props.regions.length} />
+          <DataTable minWidth={680} maxHeight={500}>
+            <thead>
+              <tr>
+                <th>地区</th>
+                <th>可用</th>
+                <th>已绑�?/th>
+                <th>冷却/失败</th>
+                <th>库存状�?/th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedRegions.rows.map((region) => (
+                <tr className={selectedRegion?.key === region.key ? "selected-row" : undefined} key={region.key}>
+                  <td><strong>{region.label}</strong></td>
+                  <td>{region.free}</td>
+                  <td>{region.locked}</td>
+                  <td>{region.bad}</td>
+                  <td><Status status={region.free < 2 ? "low" : "healthy"} /></td>
+                  <td><button type="button" onClick={() => setSelectedRegionKey(region.key)}>查看</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+          <Pagination page={pagedRegions.page} totalPages={pagedRegions.totalPages} onPageChange={pagedRegions.setPage} />
+          <FilteredEmptyState
+            emptyText="暂无地区库存�?
+            filteredText="没有符合条件的地区库�?
+            shown={filteredRegions.length}
+            total={props.regions.length}
+          />
+        </Panel>
+
+        <RegionDetail onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage} region={selectedRegion} />
+      </section>
+    </>
+  );
+}
+
+function AdminProxies(props: {
+  entries: ProxyEntry[];
+  isSaving: boolean;
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams" | "users", options: { country?: string | null; search?: string }) => void;
+  readOnlyIntent: AdminReadOnlyIntent | null;
+  setReadOnlyIntent: (intent: AdminReadOnlyIntent | null) => void;
+  updateProxyEntryStatus: (entryId: number, status: "active" | "disabled") => Promise<UpdateProxyEntryStatusResponse>;
+}) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [countryFilter, setCountryFilter] = useState("all");
+  const [selectedEntryId, setSelectedEntryId] = useState<number | null>(props.entries[0]?.id ?? null);
+  const countriesInEntries = [...new Set(props.entries.map((entry) => entry.targetCountry).filter(Boolean))].sort();
+  const filteredEntries = props.entries.filter((entry) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      entry.username.toLowerCase().includes(query) ||
+      entry.user.username.toLowerCase().includes(query) ||
+      String(entry.id).includes(query) ||
+      String(entry.currentUpstreamId ?? "").includes(query) ||
+      (entry.currentIp || "").toLowerCase().includes(query) ||
+      formatLocation(entry.targetCountry, entry.targetRegion, entry.targetCity).toLowerCase().includes(query);
+    const matchesStatus = statusFilter === "all" || entry.status === statusFilter;
+    const matchesCountry = countryFilter === "all" || entry.targetCountry === countryFilter;
+    return matchesSearch && matchesStatus && matchesCountry;
+  });
+  const pagedEntries = usePagedRows(filteredEntries, 8);
+  const selectedEntry = filteredEntries.find((entry) => entry.id === selectedEntryId) ?? filteredEntries[0] ?? null;
+  const hasFilters = Boolean(search.trim()) || statusFilter !== "all" || countryFilter !== "all";
+
+  useEffect(() => {
+    if (!props.readOnlyIntent) return;
+    if (props.readOnlyIntent.search) setSearch(props.readOnlyIntent.search);
+    if (props.readOnlyIntent.country) setCountryFilter(props.readOnlyIntent.country);
+    setStatusFilter("all");
+    props.setReadOnlyIntent(null);
+  }, [props.readOnlyIntent, props.setReadOnlyIntent]);
+
+  return (
+    <>
+      <section className="metric-grid compact">
+        <Metric label="代理总数" value={String(props.entries.length)} />
+        <Metric label="启用" value={String(props.entries.filter((entry) => entry.status === "active").length)} />
+        <Metric label="停用" value={String(props.entries.filter((entry) => entry.status === "disabled").length)} />
+        <Metric label="活跃连接" value={String(props.entries.reduce((total, entry) => total + entry.activeConnections, 0))} />
+        <Metric label="已用流量" value={formatBytes(String(sumStrings(props.entries.map((entry) => entry.trafficUsedBytes))))} />
+      </section>
+
+      <section className="action-strip">
+        <div>
+          <h2>代理运行工作�?/h2>
+          <p>先看代理状态、流量和连接数，再查看单条代理详情。重绑、禁用、删除先放在详情里禁用�?/p>
+        </div>
+      </section>
+
+      <section className="master-detail">
+      <Panel title="代理运行" count={filteredEntries.length}>
+          <div className="hint-list">
+            <span>搜索可以输入代理账号、所属用户、出�?IP 或地区；状态和国家筛选可以一起用�?/span>
+          </div>
+          <div className="table-tools">
+            <label>
+              搜索
+              <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="ID、代理账号、用户、出�?IP" />
+            </label>
+            <label>
+              状�?              <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+                <option value="all">全部状�?/option>
+                <option value="active">启用</option>
+                <option value="disabled">停用</option>
+                <option value="dead">失效</option>
+              </select>
+            </label>
+            <label>
+              国家
+              <select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}>
+                <option value="all">全部国家</option>
+                {countriesInEntries.map((country) => (
+                  <option key={country} value={country}>{country.toUpperCase()}</option>
+                ))}
+              </select>
+            </label>
+            {hasFilters && (
+              <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); setCountryFilter("all"); }}>重置筛�?/button>
+            )}
+          </div>
+          <ActiveFilters
+            items={[
+              { label: "搜索", value: search.trim() || null, onClear: search.trim() ? () => setSearch("") : null },
+              { label: "状�?, value: statusFilter === "all" ? null : statusLabel(statusFilter), onClear: statusFilter === "all" ? null : () => setStatusFilter("all") },
+              { label: "国家", value: countryFilter === "all" ? null : countryFilter.toUpperCase(), onClear: countryFilter === "all" ? null : () => setCountryFilter("all") }
+            ]}
+          />
+          <FilterSummary shown={filteredEntries.length} total={props.entries.length} />
+          <DataTable minWidth={760} maxHeight={500}>
+            <thead>
+              <tr>
+                <th>代理账号</th>
+                <th>用户</th>
+                <th>目标地区</th>
+                <th>状�?/th>
+                <th>流量</th>
+                <th>连接</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pagedEntries.rows.map((entry) => (
+                <tr className={selectedEntry?.id === entry.id ? "selected-row" : undefined} key={entry.id}>
+                  <td><strong>{entry.username}</strong></td>
+                  <td>{entry.user.username}</td>
+                  <td>{formatLocation(entry.targetCountry, entry.targetRegion, entry.targetCity)}</td>
+                  <td><Status status={entry.status} /></td>
+                  <td>{formatBytes(entry.trafficUsedBytes)}</td>
+                  <td>{entry.activeConnections}</td>
+                  <td><button type="button" onClick={() => setSelectedEntryId(entry.id)}>查看</button></td>
+                </tr>
+              ))}
+            </tbody>
+          </DataTable>
+          <Pagination page={pagedEntries.page} totalPages={pagedEntries.totalPages} onPageChange={pagedEntries.setPage} />
+          <FilteredEmptyState
+            emptyText="暂无代理运行记录�?
+            filteredText="没有符合条件的代理运行记�?
+            shown={filteredEntries.length}
+            total={props.entries.length}
+          />
+        </Panel>
+
+        <ProxyEntryDetail
+          entry={selectedEntry}
+          isSaving={props.isSaving}
+          onOpenAdminReadOnlyPage={props.onOpenAdminReadOnlyPage}
+          updateProxyEntryStatus={props.updateProxyEntryStatus}
+        />
+      </section>
+    </>
+  );
+}
+
+function RegionDetail(props: {
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams", options: { country?: string | null; search?: string }) => void;
+  region: RegionInventory | null;
+}) {
+  if (!props.region) {
+    return (
+      <Panel title="地区详情">
+        <EmptyState text="请选择一个地区�? />
+      </Panel>
+    );
+  }
+
+  return (
+    <aside className="detail-panel">
+      <div className="section-heading">
+        <h2>地区详情</h2>
+        <Status status={props.region.free < 2 ? "low" : "healthy"} />
+      </div>
+      <div className="detail-title">
+        <strong>{props.region.label}</strong>
+        <span>库存键：{props.region.key}</span>
+      </div>
+      <div className="detail-grid">
+        <DetailItem label="总上�? value={String(props.region.total)} />
+        <DetailItem label="可用上游" value={String(props.region.free)} />
+        <DetailItem label="已绑�? value={String(props.region.locked)} />
+        <DetailItem label="冷却/失败" value={String(props.region.bad)} />
+        <DetailItem label="库存状�? value={props.region.free < 2 ? "偏低" : "充足"} />
+      </div>
+      <div className="deferred-actions">
+        <p>查看上游、查看代理、检测地区后续需要和筛选跳转、扫描任务、操作日志一起做�?/p>
+        <ActionRow>
+          <button
+            type="button"
+            onClick={() =>
+              props.onOpenAdminReadOnlyPage("upstreams", {
+                country: props.region?.country ?? null,
+                search: props.region?.label ?? ""
+              })
+            }
+          >
+            查看上游
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              props.onOpenAdminReadOnlyPage("proxies", {
+                country: props.region?.country ?? null,
+                search: props.region?.label ?? ""
+              })
+            }
+          >
+            查看代理
+          </button>
+          <button
+            type="button"
+            onClick={() =>
+              props.onOpenAdminReadOnlyPage("logs", {
+                search: props.region?.label ?? ""
+              })
+            }
+          >
+            查看日志
+          </button>
+          <DisabledAction label="检测地�? />
+        </ActionRow>
+      </div>
+    </aside>
+  );
+}
+
+function ProxyEntryDetail(props: {
+  entry: ProxyEntry | null;
+  isSaving: boolean;
+  onOpenAdminReadOnlyPage: (page: "logs" | "proxies" | "upstreams" | "users", options: { country?: string | null; search?: string }) => void;
+  updateProxyEntryStatus: (entryId: number, status: "active" | "disabled") => Promise<UpdateProxyEntryStatusResponse>;
+}) {
+  const [pendingAction, setPendingAction] = useState<{
+    activeConnections: number;
+    currentIp: string | null;
+    currentStatus: string;
+    entryId: number;
+    lockedUpstreamId: number | null;
+    status: "active" | "disabled";
+    targetCity: string | null;
+    targetCountry: string;
+    targetRegion: string | null;
+    username: string;
+  } | null>(null);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  if (!props.entry && !pendingAction) {
+    return (
+      <Panel title="代理详情">
+        <EmptyState text="请选择一条代理�? />
+      </Panel>
+    );
+  }
+
+  const currentEntry = props.entry;
+  const statusAction =
+    currentEntry?.status === "active"
+      ? { nextStatus: "disabled" as const }
+      : currentEntry?.status === "disabled" || currentEntry?.status === "dead"
+        ? { nextStatus: "active" as const }
+        : null;
+  const nextStatus = statusAction?.nextStatus ?? "disabled";
+  const statusActionButtonLabel = statusAction ? (nextStatus === "disabled" ? "??????" : "??????") : "????????????????";
+  const statusActionLabel = nextStatus === "disabled" ? "停用代理" : "启用代理";
+
+  async function confirmStatusChange() {
+    if (!pendingAction) return;
+    setStatusError(null);
+    const result = await props.updateProxyEntryStatus(pendingAction.entryId, pendingAction.status);
+    if (result.ok) {
+      setPendingAction(null);
+      setStatusError(null);
+    } else {
+      setStatusError(result.error || "修改代理状态失�?);
+    }
+  }
+
+  return (
+    <>
+      {currentEntry ? (
+        <aside className="detail-panel">
+          <div className="section-heading">
+            <h2>代理详情</h2>
+            <Status status={currentEntry.status} />
+          </div>
+          <div className="detail-title">
+            <strong>#{currentEntry.id}</strong>
+            <span>{currentEntry.username}</span>
+          </div>
+          <div className="detail-grid">
+            <DetailItem label="所属用�? value={currentEntry.user.username} />
+            <DetailItem label="目标地区" value={formatLocation(currentEntry.targetCountry, currentEntry.targetRegion, currentEntry.targetCity)} />
+            <DetailItem label="当前出口 IP" value={currentEntry.currentIp || "未绑�?} />
+            <DetailItem label="当前地区" value={formatLocation(currentEntry.currentCountry, currentEntry.currentRegion, currentEntry.currentCity)} />
+            <DetailItem label="已用流量" value={formatBytes(currentEntry.trafficUsedBytes)} />
+            <DetailItem label="活跃连接" value={String(currentEntry.activeConnections)} />
+            <DetailItem label="当前上游" value={currentEntry.lockedUpstream ? `#${currentEntry.lockedUpstream.id}` : "�?} />
+            <DetailItem label="最后使�? value={formatDate(currentEntry.lastUsedAt)} />
+            <DetailItem label="最后检�? value={formatDate(currentEntry.lastCheckedAt)} />
+          </div>
+          <div className="deferred-actions">
+            <p>重绑、删除仍然属于高风险动作，先继续禁用。启�?停用现在先走确认流程，避免误操作�?/p>
+            <ActionRow>
+              <button
+                type="button"
+                onClick={() => props.onOpenAdminReadOnlyPage("users", { search: currentEntry.user.username || "" })}
+              >
+                查看用户
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  props.onOpenAdminReadOnlyPage("upstreams", {
+                    country: currentEntry.currentCountry ?? currentEntry.targetCountry ?? null,
+                    search: currentEntry.lockedUpstream ? String(currentEntry.lockedUpstream.id) : currentEntry.currentIp || ""
+                  })
+                }
+              >
+                查看上游
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  props.onOpenAdminReadOnlyPage("logs", {
+                    search: currentEntry.currentIp || String(currentEntry.currentUpstreamId ?? currentEntry.id ?? "")
+                  })
+                }
+              >
+                查看日志
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (!statusAction) return;
+                  setPendingAction({
+                    activeConnections: currentEntry.activeConnections,
+                    currentIp: currentEntry.currentIp ?? null,
+                    currentStatus: currentEntry.status,
+                    entryId: currentEntry.id,
+                    lockedUpstreamId: currentEntry.lockedUpstream?.id ?? null,
+                    status: statusAction?.nextStatus ?? "disabled",
+                    targetCity: currentEntry.targetCity ?? null,
+                    targetCountry: currentEntry.targetCountry ?? "",
+                    targetRegion: currentEntry.targetRegion ?? null,
+                    username: currentEntry.username
+                  });
+                  setStatusError(null);
+                }}
+                disabled={!statusAction}
+              >
+                {statusAction ? (nextStatus === "disabled" ? "鍋滅敤浠ｇ悊" : "鍚敤浠ｇ悊") : "褰撳墠鐘舵€佹殏涓嶆敮鎸佸垏�?"}
+              </button>
+              <DisabledAction label="重绑" />
+              <DisabledAction label="删除" />
+            </ActionRow>
+          </div>
+        </aside>
+      ) : (
+        <Panel title="代理详情">
+          <EmptyState text="当前列表已变化，但这次确认仍然锁定在你刚才打开的那条代理�? />
+        </Panel>
+      )}
+
+      {pendingAction && (
+        <Modal title={pendingAction.status === "disabled" ? "确认停用代理" : "确认启用代理"} onClose={() => { setPendingAction(null); setStatusError(null); }}>
+          <div className="modal-form">
+            <div className="section-heading">
+              <h2>{pendingAction.username}</h2>
+              <span>{formatLocation(pendingAction.targetCountry, pendingAction.targetRegion, pendingAction.targetCity)}</span>
+            </div>
+            <div className="hint-list">
+              {pendingAction.status === "disabled" ? (
+                <>
+                  <span>停用后，这条代理会停止使用当前上游�?/span>
+                  <span>如果当前有绑定，上游会按系统规则释放�?/span>
+                  {pendingAction.activeConnections > 0 && (
+                    <span>当前还有 {pendingAction.activeConnections} 个活跃连接，立刻停用可能会影响正在使用这条代理的人�?/span>
+                  )}
+                  <span>本次操作会写入管理员操作日志�?/span>
+                </>
+              ) : (
+                <>
+                  {pendingAction.currentStatus === "dead" && (
+                    <span>这条代理当前处于失效状态，本次启用会尝试把它恢复到可用状态�?/span>
+                  )}
+                  <span>启用后，系统会按目标地区自动尝试重新匹配一个可用上游�?/span>
+                  <span>如果当前没有可用且已扫描的上游，启用会安全失败，不会偷偷改成别的结果�?/span>
+                  <span>本次操作会写入管理员操作日志�?/span>
+                </>
+              )}
+            </div>
+            <div className="detail-grid">
+              <DetailItem label="当前状�? value={statusLabel(pendingAction.currentStatus)} />
+              <DetailItem label="当前上游" value={pendingAction.lockedUpstreamId ? `#${pendingAction.lockedUpstreamId}` : "�?} />
+              <DetailItem label="当前出口 IP" value={pendingAction.currentIp || "未绑�?} />
+              <DetailItem label="活跃连接" value={String(pendingAction.activeConnections)} />
+            </div>
+            {statusError && <p className="empty-state">{statusError}</p>}
+            <div className="modal-actions">
+              <button type="button" onClick={() => { setPendingAction(null); setStatusError(null); }} disabled={props.isSaving}>取消</button>
+              <button className="primary-button" type="button" onClick={() => void confirmStatusChange()} disabled={props.isSaving}>
+                {pendingAction.status === "disabled" ? "确认停用，并释放当前绑定" : "确认启用，并尝试重新匹配"}
+              </button>
+            </div>
+          </div>
+        </Modal>
+      )}
+    </>
+  );
+}
+
+function AdminLogs(props: {
+  operationLogs: OperationLog[];
+  readOnlyIntent: AdminReadOnlyIntent | null;
+  setReadOnlyIntent: (intent: AdminReadOnlyIntent | null) => void;
+  upstreams: UpstreamProxy[];
+}) {
+  const logs = props.upstreams.flatMap((upstream) =>
+    upstream.scanLogs.map((log) => ({
+      ...log,
+      host: upstream.host,
+      upstreamId: upstream.id
+    }))
+  );
+  const [operationSearch, setOperationSearch] = useState("");
+  const [operationActionFilter, setOperationActionFilter] = useState("all");
+  const [scanSearch, setScanSearch] = useState("");
+  const [scanStatusFilter, setScanStatusFilter] = useState("all");
+  const filteredOperationLogs = props.operationLogs.filter((log) => {
+    const query = operationSearch.trim().toLowerCase();
+    const summary = summarizeOperationLog(log).toLowerCase();
+    const matchesSearch =
+      !query ||
+      log.action.toLowerCase().includes(query) ||
+      log.targetType.toLowerCase().includes(query) ||
+      log.targetId.toLowerCase().includes(query) ||
+      (log.actor?.username || "").toLowerCase().includes(query) ||
+      summary.includes(query);
+    const matchesAction = operationActionFilter === "all" || log.action === operationActionFilter;
+    return matchesSearch && matchesAction;
+  });
+  const filteredLogs = logs.filter((log) => {
+    const query = scanSearch.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      String(log.upstreamId).toLowerCase().includes(query) ||
+      log.host.toLowerCase().includes(query) ||
+      (log.exitIp || "").toLowerCase().includes(query) ||
+      formatLocation(log.country, log.region, log.city).toLowerCase().includes(query) ||
+      (log.message || "").toLowerCase().includes(query) ||
+      (log.errorType || "").toLowerCase().includes(query);
+    const matchesStatus =
+      scanStatusFilter === "all" ||
+      (scanStatusFilter === "success" && log.success) ||
+      (scanStatusFilter === "failed" && !log.success);
+    return matchesSearch && matchesStatus;
+  });
+  const operationActions = [...new Set(props.operationLogs.map((log) => log.action))].sort();
+  const pagedLogs = usePagedRows(filteredLogs, 10);
+  const pagedOperationLogs = usePagedRows(filteredOperationLogs, 10);
+  const hasOperationFilters = Boolean(operationSearch.trim()) || operationActionFilter !== "all";
+  const hasScanFilters = Boolean(scanSearch.trim()) || scanStatusFilter !== "all";
+
+  useEffect(() => {
+    if (!props.readOnlyIntent) return;
+    if (props.readOnlyIntent.search) {
+      setOperationSearch(props.readOnlyIntent.search);
+      setScanSearch(props.readOnlyIntent.search);
+    }
+    setOperationActionFilter("all");
+    setScanStatusFilter("all");
+    props.setReadOnlyIntent(null);
+  }, [props.readOnlyIntent, props.setReadOnlyIntent]);
+
+  return (
+    <>
+      <section className="metric-grid compact">
+        <Metric label="日志总数" value={String(logs.length + props.operationLogs.length)} />
+        <Metric label="操作日志" value={String(filteredOperationLogs.length)} />
+        <Metric label="成功" value={String(logs.filter((log) => log.success).length)} />
+        <Metric label="失败" value={String(logs.filter((log) => !log.success).length)} tone={logs.some((log) => !log.success) ? "warn" : undefined} />
+        <Metric label="类型" value="operation + scan" />
+        <Metric label="敏感信息" value="已隐�? />
+      </section>
+      <section className="action-strip">
+        <div>
+          <h2>日志审计工作�?/h2>
+          <p>展示管理员操作和上游扫描日志。密码、密钥等敏感内容不会在这里显示�?/p>
+        </div>
+      </section>
+      <Panel title="管理员操作日�? count={filteredOperationLogs.length}>
+        <div className="hint-list">
+          <span>搜索可以输入管理员、动作、对象或摘要；动作筛选可以只看某一类操作�?/span>
+        </div>
+        <div className="table-tools">
+          <label>
+            搜索
+            <input value={operationSearch} onChange={(event) => setOperationSearch(event.target.value)} placeholder="管理员、动作、对象、摘�? />
+          </label>
+          <label>
+            动作
+            <select value={operationActionFilter} onChange={(event) => setOperationActionFilter(event.target.value)}>
+              <option value="all">全部动作</option>
+              {operationActions.map((action) => (
+                <option key={action} value={action}>{operationActionLabel(action)}</option>
+              ))}
+            </select>
+          </label>
+          {hasOperationFilters && (
+            <button type="button" onClick={() => { setOperationSearch(""); setOperationActionFilter("all"); }}>重置筛�?/button>
+          )}
+        </div>
+        <ActiveFilters
+          items={[
+            { label: "搜索", value: operationSearch.trim() || null, onClear: operationSearch.trim() ? () => setOperationSearch("") : null },
+            { label: "动作", value: operationActionFilter === "all" ? null : operationActionLabel(operationActionFilter), onClear: operationActionFilter === "all" ? null : () => setOperationActionFilter("all") }
+          ]}
+        />
+        <FilterSummary shown={filteredOperationLogs.length} total={props.operationLogs.length} />
+        <DataTable minWidth={860} maxHeight={360}>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>管理�?/th>
+              <th>动作</th>
+              <th>对象</th>
+              <th>摘要</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagedOperationLogs.rows.map((log) => (
+              <tr key={log.id}>
+                <td>{formatDate(log.createdAt)}</td>
+                <td>{log.actor?.username || `#${log.actorUserId ?? "-"}`}</td>
+                <td>{operationActionLabel(log.action)}</td>
+                <td>{log.targetType} #{log.targetId}</td>
+                <td>{summarizeOperationLog(log)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+        <Pagination page={pagedOperationLogs.page} totalPages={pagedOperationLogs.totalPages} onPageChange={pagedOperationLogs.setPage} />
+        <FilteredEmptyState
+          emptyText="暂无管理员操作日志�?
+          filteredText="没有符合条件的管理员操作日志"
+          shown={filteredOperationLogs.length}
+          total={props.operationLogs.length}
+        />
+      </Panel>
+
+      <Panel title="扫描日志" count={filteredLogs.length}>
+        <div className="hint-list">
+          <span>可以按上游编号、主机、出�?IP 或错误信息搜索，再按结果筛选�?/span>
+        </div>
+        <div className="table-tools compact-tools">
+          <label>
+            搜索
+            <input value={scanSearch} onChange={(event) => setScanSearch(event.target.value)} placeholder="上游编号、主机、出�?IP、错误信�? />
+          </label>
+          <label>
+            结果
+            <select value={scanStatusFilter} onChange={(event) => setScanStatusFilter(event.target.value)}>
+              <option value="all">全部结果</option>
+              <option value="success">成功</option>
+              <option value="failed">失败</option>
+            </select>
+          </label>
+          {hasScanFilters && (
+            <button type="button" onClick={() => { setScanSearch(""); setScanStatusFilter("all"); }}>重置筛�?/button>
+          )}
+        </div>
+        <ActiveFilters
+          items={[
+            { label: "搜索", value: scanSearch.trim() || null, onClear: scanSearch.trim() ? () => setScanSearch("") : null },
+            { label: "结果", value: scanStatusFilter === "all" ? null : statusLabel(scanStatusFilter), onClear: scanStatusFilter === "all" ? null : () => setScanStatusFilter("all") }
+          ]}
+        />
+        <FilterSummary shown={filteredLogs.length} total={logs.length} />
+        <DataTable minWidth={820} maxHeight={560}>
+          <thead>
+            <tr>
+              <th>时间</th>
+              <th>类型</th>
+              <th>对象</th>
+              <th>结果</th>
+              <th>出口 IP</th>
+              <th>消息</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagedLogs.rows.map((log) => (
+              <tr key={`${log.upstreamId}-${log.id}`}>
+                <td>{formatDate(log.createdAt)}</td>
+                <td>scan_logs</td>
+                <td>#{log.upstreamId} {log.host}</td>
+                <td><Status status={log.success ? "success" : "failed"} /></td>
+                <td>{log.exitIp || "�?}</td>
+                <td>{log.message || log.errorType || "�?}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+        <Pagination page={pagedLogs.page} totalPages={pagedLogs.totalPages} onPageChange={pagedLogs.setPage} />
+        <FilteredEmptyState
+          emptyText="暂无扫描日志�?
+          filteredText="没有符合条件的扫描日�?
+          shown={filteredLogs.length}
+          total={logs.length}
+        />
+      </Panel>
+    </>
+  );
+}
+
+function AdminSettings(props: { copyText: (text: string, successMessage: string) => Promise<void>; systemConfig: SystemConfig | null }) {
+  const gatewayTemplate = `${gatewayDisplay}:用户�?密码`;
+  const parsedGatewayTemplate = parseClientProxyCopy(gatewayTemplate);
+  const config = props.systemConfig;
+
+  return (
+    <>
+      <section className="action-strip">
+        <div>
+          <h2>系统设置</h2>
+          <p>第一版只读展示关键参数，避免在没有权限、日志和回滚规则前误改系统配置�?/p>
+        </div>
+      </section>
+      <Panel title="基础设置">
+        <div className="setting-grid">
+          <Setting label="网关端口" value="18001" />
+          <Setting label="支持国家" value="US, GB, FR, CA, AU" />
+          <Setting label="扫描间隔" value="后端接入后显�? />
+          <Setting label="扫描并发" value="后端接入后显�? />
+          <Setting label="超时时间" value="后端接入后显�? />
+          <Setting label="备份状�? value="后续接入" />
+        </div>
+      </Panel>
+
+      <Panel title="连接信息">
+        <ProxyCopyGuide passwordText="用户自己的代理密码只在生成代理时显示一次，后台不会长期保存明文�? />
+        <div className="copy-list">
+          <div className="copy-row">
+            <code>{gatewayDisplay}</code>
+            <button type="button" onClick={() => props.copyText(gatewayDisplay, "已复制网关地址模板，请按格式填写用户名和密码�?)}>
+              复制网关地址
+            </button>
+          </div>
+          <div className="copy-row">
+            <div className="copy-content">
+              <code>{gatewayTemplate}</code>
+              {parsedGatewayTemplate && (
+                <div className="copy-meta">
+                  <span><strong>主机</strong><code>{parsedGatewayTemplate.host}</code></span>
+                  <span><strong>端口</strong><code>{parsedGatewayTemplate.port}</code></span>
+                  <span><strong>用户�?/strong><code>{parsedGatewayTemplate.username}</code></span>
+                  <span><strong>密码</strong><code>{parsedGatewayTemplate.password}</code></span>
+                </div>
+              )}
+            </div>
+            <button type="button" onClick={() => props.copyText(gatewayTemplate, "已复制代理格式模板，请按此格式填写�?)}>
+              复制代理格式
+            </button>
+          </div>
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+function AdminSettingsReadOnlyConfig(props: { copyText: (text: string, successMessage: string) => Promise<void>; systemConfig: SystemConfig | null }) {
+  const gatewayTemplate = `${gatewayDisplay}:用户�?密码`;
+  const parsedGatewayTemplate = parseClientProxyCopy(gatewayTemplate);
+  const config = props.systemConfig;
+
+  return (
+    <>
+      <section className="action-strip">
+        <div>
+          <h2>系统设置</h2>
+          <p>第一版只读展示关键参数，避免在没有权限、日志和回滚规则前误改系统配置�?/p>
+        </div>
+      </section>
+      <Panel title="基础设置">
+        <div className="setting-grid">
+          <Setting label="网关端口" value={String(config?.gatewayPort ?? 18001)} />
+          <Setting label="支持国家" value={config?.supportedCountries.join(", ") || "US, GB, FR, CA, AU"} />
+          <Setting label="扫描间隔" value={config ? formatDuration(config.scanIntervalMs) : "读取�?} />
+          <Setting label="扫描并发" value={config ? String(config.scanConcurrency) : "读取�?} />
+          <Setting label="扫描批次" value={config ? String(config.scanBatchSize) : "读取�?} />
+          <Setting label="超时时间" value={config ? formatDuration(config.scanTimeoutMs) : "读取�?} />
+          <Setting label="地理缓存" value={config ? formatDuration(config.geoCacheTtlMs) : "读取�?} />
+          <Setting label="循环扫描" value={config ? (config.workerRepeat ? "已开�? : "单次执行") : "读取�?} />
+          <Setting label="备份状�? value={config?.backupStatus ?? "读取�?} />
+        </div>
+      </Panel>
+
+      <Panel title="连接信息">
+        <ProxyCopyGuide passwordText="用户自己的代理密码只在生成代理时显示一次，后台不会长期保存明文�? />
+        <div className="copy-list">
+          <div className="copy-row">
+            <code>{gatewayDisplay}</code>
+            <button type="button" onClick={() => props.copyText(gatewayDisplay, "已复制网关地址模板，请按格式填写用户名和密码�?)}>
+              复制网关地址
+            </button>
+          </div>
+          <div className="copy-row">
+            <div className="copy-content">
+              <code>{gatewayTemplate}</code>
+              {parsedGatewayTemplate && (
+                <div className="copy-meta">
+                  <span><strong>主机</strong><code>{parsedGatewayTemplate.host}</code></span>
+                  <span><strong>端口</strong><code>{parsedGatewayTemplate.port}</code></span>
+                  <span><strong>用户�?/strong><code>{parsedGatewayTemplate.username}</code></span>
+                  <span><strong>密码</strong><code>{parsedGatewayTemplate.password}</code></span>
+                </div>
+              )}
+            </div>
+            <button type="button" onClick={() => props.copyText(gatewayTemplate, "已复制代理格式模板，请按此格式填写�?)}>
+              复制代理格式
+            </button>
+          </div>
+        </div>
+      </Panel>
+    </>
+  );
+}
+
+function UserApp(props: {
+  activePage: UserPage;
+  copyText: (text: string, successMessage: string) => Promise<void>;
+  createEntries: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  createdCopies: string[];
+  entries: ProxyEntry[];
+  form: EntryFormState;
+  isSaving: boolean;
+  selectedUser: AdminUser | null;
+  setActivePage: (page: UserPage) => void;
+  setForm: (form: EntryFormState) => void;
+  trafficRows: TrafficDaily[];
+}) {
+  return (
+    <section className="workspace">
+      <Navigation label="用户面板导航">
+        <div className="nav-select">
+          <span>当前用户</span>
+          <strong>{props.selectedUser?.username || "未登录用�?}</strong>
+        </div>
+        <NavButton active={props.activePage === "home"} onClick={() => props.setActivePage("home")}>我的概览</NavButton>
+        <NavButton active={props.activePage === "generate"} onClick={() => props.setActivePage("generate")}>生成代理</NavButton>
+        <NavButton active={props.activePage === "proxies"} onClick={() => props.setActivePage("proxies")}>我的代理</NavButton>
+        <NavButton active={props.activePage === "traffic"} onClick={() => props.setActivePage("traffic")}>流量记录</NavButton>
+      </Navigation>
+
+      <section className="content">
+        {!props.selectedUser ? (
+          <EmptyState text="暂无可查看用户�? />
+        ) : (
+          <>
+            {props.activePage === "home" && (
+              <UserHome
+                user={props.selectedUser}
+                entries={props.entries}
+                trafficRows={props.trafficRows}
+                onNavigate={props.setActivePage}
+              />
+            )}
+            {props.activePage === "generate" && (
+              <UserGenerate
+                allowedCountries={
+                  props.selectedUser?.allowedCountries && props.selectedUser.allowedCountries.length > 0
+                    ? countries.filter((country) => props.selectedUser?.allowedCountries?.includes(country.value))
+                    : countries
+                }
+                copies={props.createdCopies}
+                copyText={props.copyText}
+                createEntries={props.createEntries}
+                form={{ ...props.form, userId: props.selectedUser.id.toString() }}
+                isSaving={props.isSaving}
+                setForm={props.setForm}
+              />
+            )}
+            {props.activePage === "proxies" && (
+              <UserProxies copyText={props.copyText} entries={props.entries} />
+            )}
+            {props.activePage === "traffic" && (
+              <UserTraffic entries={props.entries} rows={props.trafficRows} />
+            )}
+          </>
+        )}
+      </section>
+    </section>
+  );
+}
+
+function UserHome(props: {
+  user: AdminUser;
+  entries: ProxyEntry[];
+  trafficRows: TrafficDaily[];
+  onNavigate: (page: UserPage) => void;
+}) {
+  const quota = Number(props.user.trafficQuotaBytes);
+  const used = Number(props.user.trafficUsedBytes);
+  const remaining = quota > 0 ? Math.max(0, quota - used) : 0;
+  const today = sumStrings(props.trafficRows.filter((row) => isToday(row.date)).map((row) => row.totalBytes));
+  const month = sumStrings(props.trafficRows.filter((row) => isThisMonth(row.date)).map((row) => row.totalBytes));
+  const percent = quotaPercent(used, quota);
+
+  return (
+    <>
+      <section className="metric-grid">
+        <Metric label="剩余额度" value={quota > 0 ? formatBytes(String(remaining)) : "不限"} tone={quota > 0 && percent >= 85 ? "warn" : undefined} />
+        <Metric label="已用流量" value={formatBytes(props.user.trafficUsedBytes)} />
+        <Metric label="今日流量" value={formatBytes(String(today))} />
+        <Metric label="本月流量" value={formatBytes(String(month))} />
+        <Metric label="我的代理" value={`${props.entries.length}/${props.user.maxProxyEntries}`} />
+        <Metric label="启用代理" value={String(props.entries.filter((entry) => entry.status === "active").length)} />
+      </section>
+
+      <section className="split-grid">
+        <Panel title="额度">
+          <div className="progress-block">
+            <div className="progress-head">
+              <span>{formatBytes(props.user.trafficUsedBytes)}</span>
+              <span>{formatQuota(props.user.trafficQuotaBytes)}</span>
+            </div>
+            <div className="progress-track">
+              <span style={{ width: `${percent}%` }} />
+            </div>
+          </div>
+          {quota > 0 && percent >= 85 && (
+            <div className="alert-list quota-alert">
+              <span>
+                {percent >= 100
+                  ? "额度已用完，请联系管理员处理�?
+                  : `额度已使�?${percent}%，建议提前联系管理员。`}
+              </span>
+            </div>
+          )}
+        </Panel>
+        <Panel title="最近代�?>
+          {props.entries.length === 0 ? (
+            <EmptyState text="暂无代理�? />
+          ) : (
+            <div className="compact-list">
+              {props.entries.slice(0, 4).map((entry) => (
+                <span key={entry.id}>
+                  <strong>{entry.username}</strong>
+                  <em>{formatLocation(entry.targetCountry, entry.targetRegion, entry.targetCity)}</em>
+                </span>
+              ))}
+            </div>
+          )}
+        </Panel>
+      </section>
+
+      <section className="split-grid">
+        <Panel title="快捷入口">
+          <div className="task-list">
+            <button type="button" onClick={() => props.onNavigate("generate")}>
+              <span>生成代理</span>
+              <strong>开�?/strong>
+            </button>
+            <button type="button" onClick={() => props.onNavigate("proxies")}>
+              <span>我的代理</span>
+              <strong>{props.entries.length}</strong>
+            </button>
+            <button type="button" onClick={() => props.onNavigate("traffic")}>
+              <span>流量记录</span>
+              <strong>{props.trafficRows.length}</strong>
+            </button>
+          </div>
+        </Panel>
+      </section>
+    </>
+  );
+}
+
+function UserGenerate(props: {
+  allowedCountries: Array<{ value: string; label: string }>;
+  copies: string[];
+  copyText: (text: string, successMessage: string) => Promise<void>;
+  createEntries: (event: FormEvent<HTMLFormElement>) => Promise<void>;
+  form: EntryFormState;
+  isSaving: boolean;
+  setForm: (form: EntryFormState) => void;
+}) {
+  useEffect(() => {
+    if (props.allowedCountries.length === 0) return;
+    if (props.allowedCountries.some((country) => country.value === props.form.targetCountry)) return;
+    props.setForm({ ...props.form, targetCountry: props.allowedCountries[0].value });
+  }, [props.allowedCountries, props.form, props.setForm]);
+
+  return (
+    <>
+      {props.copies.length > 0 && (
+        <Panel title="新生成代�? count={props.copies.length}>
+        <ProxyCopyGuide passwordText="代理密码只显示这一次，关闭或刷新后不能再次查看�? />
+          <div className="copy-toolbar">
+            <button type="button" onClick={() => props.copyText(props.copies.join("\n"), `已复�?${props.copies.length} 条代理，请立即保存。`)}>
+              复制全部
+            </button>
+          </div>
+          <div className="copy-list">
+            {props.copies.map((copy) => {
+              const parsedCopy = parseClientProxyCopy(copy);
+              return (
+                <div className="copy-row" key={copy}>
+                  <div className="copy-content">
+                    <code>{copy}</code>
+                    {parsedCopy && (
+                      <div className="copy-meta">
+                        <span><strong>主机</strong><code>{parsedCopy.host}</code></span>
+                        <span><strong>端口</strong><code>{parsedCopy.port}</code></span>
+                        <span><strong>用户�?/strong><code>{parsedCopy.username}</code></span>
+                        <span><strong>密码</strong><code>{parsedCopy.password}</code></span>
+                      </div>
+                    )}
+                  </div>
+                  <button type="button" onClick={() => props.copyText(copy, "已复制代理，请立即保存�?)}>复制代理</button>
+                </div>
+              );
+            })}
+          </div>
+        </Panel>
+      )}
+
+      <form className="form-surface" onSubmit={props.createEntries}>
+        <div className="section-heading">
+          <h2>生成代理</h2>
+          <span>{gatewayDisplay}</span>
+        </div>
+        <div className="hint-list">
+          <span>生成后会自动绑定可用上游，但普通用户看不到真实上游地址和密码�?/span>
+          <span>生成成功后请立刻复制保存，系统不会长期保存明文代理密码�?/span>
+          <span>国家是必填项，州/地区和城市可以留空；留空就只按国家范围找可用资源�?/span>
+          <span>数量表示一次要生成几条代理，通常�?1 就够了，多条会连续创建�?/span>
+        </div>
+        <div className="form-grid four">
+          <label>
+            国家
+            <select value={props.form.targetCountry} onChange={(event) => props.setForm({ ...props.form, targetCountry: event.target.value })}>
+              {props.allowedCountries.map((country) => (
+                <option key={country.value} value={country.value}>{country.label}</option>
+              ))}
+            </select>
+          </label>
+          <label>
+            �?地区
+            <span className="field-note">可不填，留空表示不限制州/地区�?/span>
+            <input
+              value={props.form.targetRegion}
+              onChange={(event) => props.setForm({ ...props.form, targetRegion: event.target.value })}
+              placeholder="可不�?
+            />
+          </label>
+          <label>
+            城市
+            <span className="field-note">可不填，留空表示不限制城市�?/span>
+            <input
+              value={props.form.targetCity}
+              onChange={(event) => props.setForm({ ...props.form, targetCity: event.target.value })}
+              placeholder="可不�?
+            />
+          </label>
+          <label>
+            数量
+            <span className="field-note">通常�?1；如果要一次生成多条，填更大的数字�?/span>
+            <input
+              min="1"
+              max="20"
+              type="number"
+              value={props.form.count}
+              onChange={(event) => props.setForm({ ...props.form, count: event.target.value })}
+            />
+          </label>
+        </div>
+        <button className="primary-button" type="submit" disabled={props.isSaving || !props.form.userId}>
+          生成代理
+        </button>
+      </form>
+    </>
+  );
+}
+
+function AdminSelectedUserEntryForm(props: {
+  allowedCountries: Array<{ value: string; label: string }>;
+  form: EntryFormState;
+  isSaving: boolean;
+  setForm: (form: EntryFormState) => void;
+}) {
+  useEffect(() => {
+    if (props.allowedCountries.length === 0) return;
+    if (props.allowedCountries.some((country) => country.value === props.form.targetCountry)) return;
+    props.setForm({ ...props.form, targetCountry: props.allowedCountries[0].value });
+  }, [props.allowedCountries, props.form, props.setForm]);
+
+  return (
+    <>
+      <div className="hint-list">
+        <span>创建后会立即绑定可用上游，并只显示这一回代理密码�?/span>
+        <span>国家是必填项，州/地区和城市可以留空；留空就按更大范围找可用资源�?/span>
+      </div>
+      <div className="form-grid four">
+        <label>
+          国家
+          <select value={props.form.targetCountry} onChange={(event) => props.setForm({ ...props.form, targetCountry: event.target.value })}>
+            {props.allowedCountries.map((country) => (
+              <option key={country.value} value={country.value}>{country.label}</option>
+            ))}
+          </select>
+        </label>
+        <label>
+          �?/ 地区
+          <span className="field-note">可不填，留空表示不限�?/ 地区�?/span>
+          <input
+            value={props.form.targetRegion}
+            onChange={(event) => props.setForm({ ...props.form, targetRegion: event.target.value })}
+            placeholder="可不�?
+          />
+        </label>
+        <label>
+          城市
+          <span className="field-note">可不填，留空表示不限城市�?/span>
+          <input
+            value={props.form.targetCity}
+            onChange={(event) => props.setForm({ ...props.form, targetCity: event.target.value })}
+            placeholder="可不�?
+          />
+        </label>
+        <label>
+          数量
+          <span className="field-note">通常�?1；如果想一次创建多条，可以填更大的数字�?/span>
+          <input
+            min="1"
+            max="20"
+            type="number"
+            value={props.form.count}
+            onChange={(event) => props.setForm({ ...props.form, count: event.target.value })}
+          />
+        </label>
+      </div>
+      <button className="primary-button" type="submit" disabled={props.isSaving || !props.form.userId}>
+        创建代理
+      </button>
+    </>
+  );
+}
+
+function UserProxies(props: {
+  copyText: (text: string, successMessage: string) => Promise<void>;
+  entries: ProxyEntry[];
+}) {
+  const [search, setSearch] = useState("");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [countryFilter, setCountryFilter] = useState("all");
+  const hasFilters = Boolean(search.trim()) || statusFilter !== "all" || countryFilter !== "all";
+  const countriesInEntries = [...new Set(props.entries.map((entry) => entry.targetCountry).filter(Boolean))].sort();
+  const filteredEntries = props.entries.filter((entry) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      entry.username.toLowerCase().includes(query) ||
+      String(entry.id).includes(query) ||
+      (entry.currentIp || "").toLowerCase().includes(query) ||
+      formatLocation(entry.targetCountry, entry.targetRegion, entry.targetCity).toLowerCase().includes(query);
+    const matchesStatus = statusFilter === "all" || entry.status === statusFilter;
+    const matchesCountry = countryFilter === "all" || entry.targetCountry === countryFilter;
+    return matchesSearch && matchesStatus && matchesCountry;
+  });
+  const pagedEntries = usePagedRows(filteredEntries, 10);
+
+  return (
+    <Panel title="我的代理" count={filteredEntries.length}>
+      <div className="hint-list">
+        <span>已创建代理只保留账号和状态；密码只在创建成功时显示一次�?/span>
+        <span>如果忘记代理密码，请重新生成新代理或后续由管理员按安全流程处理�?/span>
+        <span>搜索可以输入代理账号、出�?IP 或地区；状态和国家筛选可以一起用�?/span>
+      </div>
+      <div className="table-tools">
+        <label>
+          搜索
+          <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="代理账号、出�?IP、地�? />
+        </label>
+        <label>
+          状�?          <select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}>
+            <option value="all">全部状�?/option>
+            <option value="active">启用</option>
+            <option value="disabled">停用</option>
+            <option value="dead">失效</option>
+          </select>
+        </label>
+        <label>
+          国家
+          <select value={countryFilter} onChange={(event) => setCountryFilter(event.target.value)}>
+            <option value="all">全部国家</option>
+            {countriesInEntries.map((country) => (
+              <option key={country} value={country}>{country.toUpperCase()}</option>
+            ))}
+          </select>
+        </label>
+        {hasFilters && (
+          <button type="button" onClick={() => { setSearch(""); setStatusFilter("all"); setCountryFilter("all"); }}>重置筛�?/button>
+        )}
+      </div>
+      <ActiveFilters
+        items={[
+          { label: "搜索", value: search.trim() || null, onClear: search.trim() ? () => setSearch("") : null },
+          { label: "状�?, value: statusFilter === "all" ? null : statusLabel(statusFilter), onClear: statusFilter === "all" ? null : () => setStatusFilter("all") },
+          { label: "国家", value: countryFilter === "all" ? null : countryFilter.toUpperCase(), onClear: countryFilter === "all" ? null : () => setCountryFilter("all") }
+        ]}
+      />
+      <FilterSummary shown={filteredEntries.length} total={props.entries.length} />
+      <DataTable minWidth={1080}>
+        <thead>
+          <tr>
+            <th>代理账号</th>
+            <th>格式说明</th>
+            <th>目标地区</th>
+            <th>当前出口 IP</th>
+            <th>当前地区</th>
+            <th>状�?/th>
+            <th>已用流量</th>
+            <th>连接</th>
+            <th>创建时间</th>
+            <th>最后使�?/th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          {pagedEntries.rows.map((entry) => (
+            <tr key={entry.id}>
+              <td><strong>{entry.username}</strong></td>
+              <td><code>{gatewayDisplay}:{entry.username}:密码只在创建时显�?/code></td>
+              <td>{formatLocation(entry.targetCountry, entry.targetRegion, entry.targetCity)}</td>
+              <td>{entry.currentIp || "未绑�?}</td>
+              <td>{formatLocation(entry.currentCountry, entry.currentRegion, entry.currentCity)}</td>
+              <td><Status status={entry.status} /></td>
+              <td>{formatBytes(entry.trafficUsedBytes)}</td>
+              <td>{entry.activeConnections}</td>
+              <td>{formatDate(entry.createdAt)}</td>
+              <td>{formatDate(entry.lastUsedAt)}</td>
+              <td>
+                <ActionRow>
+                  <button
+                    type="button"
+                    onClick={() => props.copyText(`${gatewayDisplay}:${entry.username}:密码只在创建时显示`, "已复制格式说明，不含真实密码�?)}
+                  >
+                    复制格式说明
+                  </button>
+                  <DisabledAction label="检测出�?IP" />
+                  <DisabledAction label="重新匹配" />
+                  <DisabledAction label="停用" />
+                  <DisabledAction label="删除" />
+                </ActionRow>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </DataTable>
+      <Pagination page={pagedEntries.page} totalPages={pagedEntries.totalPages} onPageChange={pagedEntries.setPage} />
+      <FilteredEmptyState
+        emptyText="暂无代理�?
+        filteredText="没有符合条件的代�?
+        shown={filteredEntries.length}
+        total={props.entries.length}
+      />
+    </Panel>
+  );
+}
+
+function UserTraffic(props: { rows: TrafficDaily[]; entries: ProxyEntry[] }) {
+  const today = sumStrings(props.rows.filter((row) => isToday(row.date)).map((row) => row.totalBytes));
+  const month = sumStrings(props.rows.filter((row) => isThisMonth(row.date)).map((row) => row.totalBytes));
+  const [search, setSearch] = useState("");
+  const [dateFilter, setDateFilter] = useState("all");
+  const filteredRows = props.rows.filter((row) => {
+    const query = search.trim().toLowerCase();
+    const matchesSearch =
+      !query ||
+      row.proxyEntry.username.toLowerCase().includes(query) ||
+      row.date.includes(query) ||
+      formatLocation(row.proxyEntry.targetCountry, row.proxyEntry.targetRegion, row.proxyEntry.targetCity).toLowerCase().includes(query);
+    const matchesDate =
+      dateFilter === "all" ||
+      (dateFilter === "today" && isToday(row.date)) ||
+      (dateFilter === "month" && isThisMonth(row.date));
+    return matchesSearch && matchesDate;
+  });
+  const filteredEntryIds = new Set(filteredRows.map((row) => row.proxyEntryId));
+  const filteredEntries = search.trim() || dateFilter !== "all" ? props.entries.filter((entry) => filteredEntryIds.has(entry.id)) : props.entries;
+  const pagedEntries = usePagedRows(filteredEntries, 10);
+  const pagedRows = usePagedRows(filteredRows, 10);
+  const hasFilters = Boolean(search.trim()) || dateFilter !== "all";
+
+  return (
+    <>
+      <section className="metric-grid compact">
+        <Metric label="今日流量" value={formatBytes(String(today))} />
+        <Metric label="本月流量" value={formatBytes(String(month))} />
+        <Metric label="有记录代�? value={String(new Set(props.rows.map((row) => row.proxyEntryId)).size)} />
+        <Metric label="连接次数" value={String(props.rows.reduce((total, row) => total + row.connections, 0))} />
+        <Metric label="代理数量" value={String(props.entries.length)} />
+      </section>
+
+      <Panel title="每条代理用量" count={filteredEntries.length}>
+        <div className="hint-list">
+          <span>搜索可以输入代理账号、日期或地区；日期筛选可以只看今天或本月�?/span>
+        </div>
+        <div className="table-tools">
+          <label>
+            搜索
+            <input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="代理账号、日期、地�? />
+          </label>
+          <label>
+            日期
+            <select value={dateFilter} onChange={(event) => setDateFilter(event.target.value)}>
+              <option value="all">全部日期</option>
+              <option value="today">今天</option>
+              <option value="month">本月</option>
+            </select>
+          </label>
+          {hasFilters && (
+            <button type="button" onClick={() => { setSearch(""); setDateFilter("all"); }}>重置筛�?/button>
+          )}
+        </div>
+        <ActiveFilters
+          items={[
+            { label: "搜索", value: search.trim() || null, onClear: search.trim() ? () => setSearch("") : null },
+            { label: "日期", value: dateFilter === "all" ? null : dateFilter === "today" ? "今天" : "本月", onClear: dateFilter === "all" ? null : () => setDateFilter("all") }
+          ]}
+        />
+        <FilterSummary shown={filteredEntries.length} total={props.entries.length} />
+        <DataTable minWidth={780}>
+          <thead>
+            <tr>
+              <th>代理账号</th>
+              <th>目标地区</th>
+              <th>累计用量</th>
+              <th>连接次数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagedEntries.rows.map((entry) => {
+              const rows = filteredRows.filter((row) => row.proxyEntryId === entry.id);
+              const connections = rows.reduce((total, row) => total + row.connections, 0);
+              const totalBytes = sumStrings(rows.map((row) => row.totalBytes));
+              return (
+                <tr key={entry.id}>
+                  <td><strong>{entry.username}</strong></td>
+                  <td>{formatLocation(entry.targetCountry, entry.targetRegion, entry.targetCity)}</td>
+                  <td>{formatBytes(String(totalBytes))}</td>
+                  <td>{connections}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </DataTable>
+        <Pagination page={pagedEntries.page} totalPages={pagedEntries.totalPages} onPageChange={pagedEntries.setPage} />
+        <FilteredEmptyState
+          emptyText="暂无代理用量�?
+          filteredText="没有符合条件的代理用�?
+          shown={filteredEntries.length}
+          total={props.entries.length}
+        />
+      </Panel>
+
+      <Panel title="每日记录" count={filteredRows.length}>
+        <div className="hint-list">
+          <span>这里和上面的筛选联动，方便你按日期或代理查看每天的流量明细�?/span>
+        </div>
+        <ActiveFilters
+          items={[
+            { label: "搜索", value: search.trim() || null, onClear: search.trim() ? () => setSearch("") : null },
+            { label: "日期", value: dateFilter === "all" ? null : dateFilter === "today" ? "今天" : "本月", onClear: dateFilter === "all" ? null : () => setDateFilter("all") }
+          ]}
+        />
+        <FilterSummary shown={filteredRows.length} total={props.rows.length} />
+        <DataTable minWidth={900}>
+          <thead>
+            <tr>
+              <th>日期</th>
+              <th>代理账号</th>
+              <th>上行</th>
+              <th>下行</th>
+              <th>总流�?/th>
+              <th>连接次数</th>
+            </tr>
+          </thead>
+          <tbody>
+            {pagedRows.rows.map((row) => (
+              <tr key={row.id}>
+                <td>{row.date}</td>
+                <td>{row.proxyEntry.username}</td>
+                <td>{formatBytes(row.bytesUp)}</td>
+                <td>{formatBytes(row.bytesDown)}</td>
+                <td>{formatBytes(row.totalBytes)}</td>
+                <td>{row.connections}</td>
+              </tr>
+            ))}
+          </tbody>
+        </DataTable>
+        <Pagination page={pagedRows.page} totalPages={pagedRows.totalPages} onPageChange={pagedRows.setPage} />
+        <FilteredEmptyState
+          emptyText="暂无流量记录�?
+          filteredText="没有符合条件的流量记�?
+          shown={filteredRows.length}
+          total={props.rows.length}
+        />
+      </Panel>
+    </>
+  );
+}
+
+function Navigation(props: { children: React.ReactNode; label: string }) {
+  return (
+    <nav className="side-nav" aria-label={props.label}>
+      {props.children}
+    </nav>
+  );
+}
+
+function NavButton(props: { active: boolean; children: React.ReactNode; onClick: () => void }) {
+  return (
+    <button className={props.active ? "nav-button active" : "nav-button"} type="button" onClick={props.onClick}>
+      {props.children}
+    </button>
+  );
+}
+
+function Panel(props: { children: React.ReactNode; count?: number; loading?: boolean; title: string }) {
+  return (
+    <section className="panel">
+      <div className="section-heading">
+        <h2>{props.title}</h2>
+        {props.count !== undefined && <span>{props.loading ? "读取�? : `${props.count} 条`}</span>}
+      </div>
+      {props.children}
+    </section>
+  );
+}
+
+function Metric(props: { label: string; tone?: "ok" | "warn"; value: string }) {
+  return (
+    <div className={props.tone ? `metric ${props.tone}` : "metric"}>
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+    </div>
+  );
+}
+
+function StatusBars(props: { items: Array<{ label: string; value: number; tone: "ok" | "info" | "warn" | "bad" | "muted" }> }) {
+  const total = Math.max(1, props.items.reduce((sum, item) => sum + item.value, 0));
+
+  return (
+    <div className="bar-list">
+      {props.items.map((item) => (
+        <div className="bar-row" key={item.label}>
+          <div className="bar-meta">
+            <span>{item.label}</span>
+            <strong>{item.value}</strong>
+          </div>
+          <div className="bar-track">
+            <span className={`bar-fill ${item.tone}`} style={{ width: `${Math.max(3, Math.round((item.value / total) * 100))}%` }} />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TrafficBars(props: { rows: TrafficDaily[] }) {
+  const days = lastDays(7).map((date) => {
+    const total = sumStrings(props.rows.filter((row) => row.date === date).map((row) => row.totalBytes));
+    return { date, total };
+  });
+  const max = Math.max(1, ...days.map((day) => day.total));
+
+  return (
+    <div className="traffic-bars">
+      {days.map((day) => (
+        <div className="traffic-day" key={day.date}>
+          <div className="traffic-column">
+            <span style={{ height: `${Math.max(4, Math.round((day.total / max) * 100))}%` }} />
+          </div>
+          <strong>{formatBytes(String(day.total))}</strong>
+          <em>{day.date.slice(5)}</em>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function InventoryBars(props: { upstreams: UpstreamProxy[] }) {
+  const items = countries.map((country) => {
+    const rows = props.upstreams.filter((upstream) => upstream.country === country.value);
+    return {
+      label: country.label,
+      value: rows.length,
+      free: rows.filter((row) => row.status === "free").length
+    };
+  });
+  const max = Math.max(1, ...items.map((item) => item.value));
+
+  return (
+    <div className="inventory-list">
+      {items.map((item) => (
+        <div className="inventory-row" key={item.label}>
+          <span>{item.label}</span>
+          <div className="bar-track">
+            <span className="bar-fill info" style={{ width: `${Math.max(3, Math.round((item.value / max) * 100))}%` }} />
+          </div>
+          <strong>{item.free}/{item.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function HealthLine(props: { label: string; value: string }) {
+  return (
+    <div className="health-line">
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+    </div>
+  );
+}
+
+function Setting(props: { label: string; value: string }) {
+  return (
+    <div className="setting">
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+    </div>
+  );
+}
+
+function DetailItem(props: { label: string; value: string }) {
+  return (
+    <div className="detail-item">
+      <span>{props.label}</span>
+      <strong>{props.value}</strong>
+    </div>
+  );
+}
+
+function ProxyCopyGuide(props: { passwordText: string }) {
+  return (
+    <div className="copy-guide">
+      <span>{props.passwordText}</span>
+      <ol>
+        <li>先复制整行代理字符串�?/li>
+        <li>如果软件不能整行导入，就看下面拆开的主机、端口、用户名、密码�?/li>
+        <li>按顺序填写：主机、端口、用户名、密码�?/li>
+      </ol>
+    </div>
+  );
+}
+
+function DataTable(props: { children: React.ReactNode; maxHeight?: number; minWidth: number }) {
+  return (
+    <>
+      <p className="table-scroll-hint">表格列较多时，可以左右滚动查看更多�?/p>
+      <div className={props.maxHeight ? "table-wrap scroll-table" : "table-wrap"} style={props.maxHeight ? { maxHeight: props.maxHeight } : undefined}>
+        <table style={{ minWidth: props.minWidth }}>
+          {props.children}
+        </table>
+      </div>
+    </>
+  );
+}
+
+function Modal(props: { children: React.ReactNode; onClose: () => void; title: string }) {
+  return (
+    <div className="modal-backdrop" role="presentation">
+      <section className="modal" role="dialog" aria-modal="true" aria-label={props.title}>
+        <div className="modal-head">
+          <h2>{props.title}</h2>
+          <button type="button" onClick={props.onClose} aria-label="关闭">关闭</button>
+        </div>
+        {props.children}
+      </section>
+    </div>
+  );
+}
+
+function Pagination(props: { page: number; totalPages: number; onPageChange: (page: number) => void }) {
+  if (props.totalPages <= 1) return null;
+
+  return (
+    <div className="pagination">
+      <button
+        type="button"
+        aria-label="上一�?
+        disabled={props.page <= 1}
+        onClick={() => props.onPageChange(props.page - 1)}
+        title="上一�?
+      >
+        上一�?      </button>
+      <span>�?{props.page} / �?{props.totalPages} �?/span>
+      <button
+        type="button"
+        aria-label="下一�?
+        disabled={props.page >= props.totalPages}
+        onClick={() => props.onPageChange(props.page + 1)}
+        title="下一�?
+      >
+        下一�?      </button>
+    </div>
+  );
+}
+
+function FilterSummary(props: { shown: number; total: number }) {
+  const summary = props.shown === props.total ? `当前显示全部 ${props.total} 条` : `当前筛�?${props.shown} / �?${props.total} 条`;
+
+  return (
+    <p className="filter-summary">
+      {summary}
+    </p>
+  );
+}
+
+function ActiveFilters(props: { items: Array<{ label: string; value: string | null; onClear: (() => void) | null }> }) {
+  const activeItems = props.items.filter((item) => item.value);
+  if (activeItems.length === 0) return null;
+
+  return (
+    <div className="active-filters" aria-live="polite">
+      <span className="active-filters-title">当前筛�?/span>
+      {activeItems.map((item) => (
+        <span key={`${item.label}:${item.value}`}>
+          <strong>{item.label}</strong>
+          <em>{item.value}</em>
+          {item.onClear && (
+            <button type="button" className="active-filters-clear" onClick={item.onClear} aria-label={`清除${item.label}筛选`}>
+              ×
+            </button>
+          )}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function ActionRow(props: { children: React.ReactNode }) {
+  return <div className="action-row">{props.children}</div>;
+}
+
+const disabledActionReason = "待安全流程：需要确认、日志和回滚规则后再开�?;
+
+function DisabledAction(props: { label: string }) {
+  return (
+    <button
+      aria-label={`${props.label}�?{disabledActionReason}`}
+      className="deferred-action-button"
+      disabled
+      title={disabledActionReason}
+      type="button"
+    >
+      <span>{props.label}</span>
+      <em>待安全流�?/em>
+    </button>
+  );
+}
+
+function EmptyState(props: { text: string }) {
+  return <p className="empty-state">{props.text}</p>;
+}
+
+function FilteredEmptyState(props: { emptyText: string; filteredText: string; shown: number; total: number }) {
+  if (props.shown > 0) return null;
+
+  return <EmptyState text={props.total === 0 ? props.emptyText : `${props.filteredText}，可以重置筛选。`} />;
+}
+
+function Messages(props: { error: string | null; notice: string | null }) {
+  if (!props.error && !props.notice) return null;
+  return (
+    <section className="message-stack" aria-live="polite">
+      {props.error && <p className="message error">{props.error}</p>}
+      {props.notice && <p className="message success">{props.notice}</p>}
+    </section>
+  );
+}
+
+function Status(props: { status: string }) {
+  return <span className={`status ${props.status}`}>{statusLabel(props.status)}</span>;
+}
+
+function buildRegionInventory(upstreams: UpstreamProxy[]): RegionInventory[] {
+  const map = new Map<string, RegionInventory>();
+
+  for (const upstream of upstreams) {
+    const country = upstream.country || "unknown";
+    const region = upstream.region || "any";
+    const city = upstream.city || "any";
+    const key = `${country}/${region}/${city}`;
+    const current = map.get(key) ?? {
+      bad: 0,
+      city: upstream.city,
+      country: upstream.country,
+      free: 0,
+      key,
+      label: formatLocation(country, region, city),
+      locked: 0,
+      region: upstream.region,
+      total: 0
+    };
+    current.total += 1;
+    if (upstream.status === "free") current.free += 1;
+    if (upstream.status === "locked") current.locked += 1;
+    if (["bad", "disabled", "cooldown"].includes(upstream.status)) current.bad += 1;
+    map.set(key, current);
+  }
+
+  return [...map.values()].sort((left, right) => right.total - left.total || left.label.localeCompare(right.label));
+}
+
+function readStoredSession(storageKey: string, surface: AppMode): AuthSession | null {
+  try {
+    const raw = localStorage.getItem(storageKey);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<AuthSession>;
+    if (!parsed.token || !parsed.user || parsed.user.role !== surface) return null;
+    return parsed as AuthSession;
+  } catch {
+    return null;
+  }
+}
+
+function countStatuses(statuses: string[]): Record<string, number> {
+  return statuses.reduce<Record<string, number>>((counts, status) => {
+    counts[status] = (counts[status] ?? 0) + 1;
+    return counts;
+  }, {});
+}
+
+function parseClientProxyCopy(value: string): { host: string; password: string; port: string; username: string } | null {
+  const parts = value.split(":");
+  if (parts.length < 4) return null;
+  const [host, port, username, ...passwordParts] = parts;
+  const password = passwordParts.join(":");
+  if (!host || !port || !username || !password) return null;
+  return { host, port, username, password };
+}
+
+function usePagedRows<T>(rows: T[], pageSize: number) {
+  const [page, setPage] = useState(1);
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const safePage = Math.min(page, totalPages);
+
+  useEffect(() => {
+    if (page !== safePage) setPage(safePage);
+  }, [page, safePage]);
+
+  return {
+    page: safePage,
+    rows: rows.slice((safePage - 1) * pageSize, safePage * pageSize),
+    setPage,
+    totalPages
+  };
+}
+
+function sumRecord(record: Record<string, number>): number {
+  return Object.values(record).reduce((total, value) => total + value, 0);
+}
+
+function sumStrings(values: string[]): number {
+  return values.reduce((total, value) => {
+    const number = Number(value);
+    return total + (Number.isFinite(number) ? number : 0);
+  }, 0);
+}
+
+function quotaPercent(used: number, quota: number): number {
+  if (!quota || quota <= 0) return 0;
+  return Math.max(0, Math.min(100, Math.round((used / quota) * 100)));
+}
+
+function formatRemaining(quotaValue: string, usedValue: string): string {
+  const quota = Number(quotaValue);
+  const used = Number(usedValue);
+  if (!quota || quota <= 0) return "不限";
+  return formatBytes(String(Math.max(0, quota - used)));
+}
+
+function formatAllowedCountries(values?: string[]): string {
+  if (!values || values.length === 0) return "未设�?;
+  const labels = values.map((value) => countries.find((country) => country.value === value)?.label || value.toUpperCase());
+  return labels.join(", ");
+}
+
+function formatLocation(country: string | null, region: string | null, city: string | null): string {
+  return [country?.toUpperCase(), region, city].filter(Boolean).join(" / ") || "不限";
+}
+
+function formatBytes(value: string): string {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0 B";
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`;
+}
+
+function formatQuota(value: string): string {
+  return Number(value) > 0 ? formatBytes(value) : "不限";
+}
+
+function bytesToGbInput(value: string): string {
+  const bytes = Number(value);
+  if (!Number.isFinite(bytes) || bytes <= 0) return "0";
+  const gb = bytes / 1024 / 1024 / 1024;
+  return Number.isInteger(gb) ? String(gb) : gb.toFixed(2);
+}
+
+function formatLatency(value: number | null): string {
+  return typeof value === "number" ? `${value} ms` : "未测";
+}
+
+function formatDate(value: string | null): string {
+  if (!value) return "�?;
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(new Date(value));
+}
+
+function formatRefreshTime(value: Date): string {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit"
+  }).format(value);
+}
+
+function formatDuration(ms: number): string {
+  if (ms % (60 * 60_000) === 0) return `${ms / (60 * 60_000)} 小时`;
+  if (ms % 60_000 === 0) return `${ms / 60_000} 分钟`;
+  if (ms % 1000 === 0) return `${ms / 1000} 秒`;
+  return `${ms} ms`;
+}
+
+function lastDays(count: number): string[] {
+  return Array.from({ length: count }, (_, index) => {
+    const date = new Date();
+    date.setDate(date.getDate() - (count - index - 1));
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+function statusLabel(status: string): string {
+  const labels: Record<string, string> = {
+    active: "启用",
+    bad: "失败",
+    cooldown: "冷却",
+    dead: "失效",
+    disabled: "停用",
+    failed: "失败",
+    free: "空闲",
+    healthy: "充足",
+    locked: "已绑�?,
+    low: "偏低",
+    success: "成功"
+  };
+  return labels[status] || status;
+}
+
+function operationActionLabel(action: string): string {
+  const labels: Record<string, string> = {
+    admin_proxy_entry_create: "管理员创建代�?,
+    proxy_entry_status_update: "修改代理状�?,
+    user_proxy_entry_create: "用户创建代理",
+    user_create: "创建用户",
+    user_password_reset: "重置用户密码",
+    user_settings_update: "修改用户设置",
+    upstream_import: "导入上游"
+  };
+  return labels[action] || action;
+}
+
+function summarizeOperationLog(log: OperationLog): string {
+  const detail = isPlainRecord(log.detail) ? log.detail : {};
+  const username = typeof detail.username === "string" ? detail.username : "";
+
+  if (log.action === "user_password_reset") {
+    const source = typeof detail.passwordSource === "string" ? detail.passwordSource : "new";
+    return `${username || "用户"}：密码已重置�?{source === "generated" ? "系统生成" : "手动填写"}），明文未入日志`;
+  }
+
+  if (log.action === "user_create") {
+    const source = typeof detail.passwordSource === "string" ? detail.passwordSource : "generated";
+    const quota = safeDisplayValue(detail.trafficQuotaGb);
+    const limit = safeDisplayValue(detail.maxProxyEntries);
+    const countriesText = safeDisplayValue(detail.allowedCountries);
+    return `${username || "用户"}：已创建（密�?{source === "generated" ? "系统生成" : "手动填写"}，总额�?${quota} GB，代理上�?${limit}，允许国�?${countriesText}）`;
+  }
+
+  if (log.action === "admin_proxy_entry_create") {
+    const owner = typeof detail.username === "string" ? detail.username : "用户";
+    const proxyUsername = typeof detail.proxyEntryUsername === "string" ? detail.proxyEntryUsername : "新代�?;
+    const source = typeof detail.passwordSource === "string" ? detail.passwordSource : "generated";
+    const location = formatLocation(
+      typeof detail.targetCountry === "string" ? detail.targetCountry : null,
+      typeof detail.targetRegion === "string" ? detail.targetRegion : null,
+      typeof detail.targetCity === "string" ? detail.targetCity : null
+    );
+    return `${owner}：已创建代理 ${proxyUsername}�?{location}，密�?{source === "generated" ? "系统生成" : "手动填写"}）`;
+  }
+
+  if (log.action === "upstream_import") {
+    const created = safeDisplayValue(detail.created);
+    const duplicates = safeDisplayValue(detail.duplicates);
+    const failed = safeDisplayValue(detail.failed);
+    const validLines = safeDisplayValue(detail.validLines);
+    const invalidLines = safeDisplayValue(detail.invalidLines);
+    return `已导入上游（新增 ${created}，重�?${duplicates}，失�?${failed}，有效行 ${validLines}，无效行 ${invalidLines}）`;
+  }
+
+  if (log.action === "proxy_entry_status_update") {
+    const owner = typeof detail.username === "string" ? detail.username : "用户";
+    const proxyUsername = typeof detail.proxyEntryUsername === "string" ? detail.proxyEntryUsername : "代理";
+    const changes = isPlainRecord(detail.changes) ? detail.changes : {};
+    const statusChange = isPlainRecord(changes.status) ? changes.status : null;
+    const location = formatLocation(
+      typeof detail.targetCountry === "string" ? detail.targetCountry : null,
+      typeof detail.targetRegion === "string" ? detail.targetRegion : null,
+      typeof detail.targetCity === "string" ? detail.targetCity : null
+    );
+    const from = statusChange ? safeDisplayValue(statusChange.from) : "�?;
+    const to = statusChange ? safeDisplayValue(statusChange.to) : "�?;
+    return `${owner}：代�?${proxyUsername} 状�?${statusLabel(from)} -> ${statusLabel(to)}�?{location}）`;
+  }
+
+  if (log.action === "user_proxy_entry_create") {
+    const owner = typeof detail.username === "string" ? detail.username : "用户";
+    const proxyUsername = typeof detail.proxyEntryUsername === "string" ? detail.proxyEntryUsername : "新代�?;
+    const source = typeof detail.passwordSource === "string" ? detail.passwordSource : "generated";
+    const location = formatLocation(
+      typeof detail.targetCountry === "string" ? detail.targetCountry : null,
+      typeof detail.targetRegion === "string" ? detail.targetRegion : null,
+      typeof detail.targetCity === "string" ? detail.targetCity : null
+    );
+    return `${owner}：已自助创建代理 ${proxyUsername}�?{location}，密�?{source === "generated" ? "系统生成" : "手动填写"}）`;
+  }
+
+  if (log.action === "user_settings_update") {
+    const changes = isPlainRecord(detail.changes) ? detail.changes : {};
+    const fieldSummaries = Object.entries(changes)
+      .filter(([key]) => !isSensitiveField(key))
+      .map(([key, value]) => formatOperationChange(key, value));
+    return `${username || "用户"}�?{fieldSummaries.length > 0 ? fieldSummaries.join("�?) : "设置已更�?}`;
+  }
+
+  return safeDetailSummary(detail);
+}
+
+function operationFieldLabel(field: string): string {
+  const labels: Record<string, string> = {
+    status: "状�?,
+    trafficQuotaGb: "总额�?,
+    maxProxyEntries: "代理上限",
+    allowedCountries: "允许国家"
+  };
+  return labels[field] || field;
+}
+
+function safeDetailSummary(value: unknown): string {
+  if (!isPlainRecord(value)) return "无详�?;
+  const entries = Object.entries(value)
+    .filter(([key]) => !isSensitiveField(key))
+    .slice(0, 4)
+    .map(([key, entryValue]) => `${operationFieldLabel(key)}=${safeDisplayValue(entryValue)}`);
+  return entries.length > 0 ? entries.join("�?) : "无可显示详情";
+}
+
+function safeDisplayValue(value: unknown): string {
+  if (value === null || value === undefined) return "�?;
+  if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    if (value.every((item) => typeof item === "string")) {
+      return value.map((item) => formatCountryCode(item)).join(", ");
+    }
+    return `${value.length} 项`;
+  }
+  if (isPlainRecord(value)) return "已记�?;
+  return "已记�?;
+}
+
+function formatOperationChange(field: string, value: unknown): string {
+  const label = operationFieldLabel(field);
+  if (field === "allowedCountries" && isPlainRecord(value)) {
+    const from = safeDisplayValue(value.from);
+    const to = safeDisplayValue(value.to);
+    return `${label} ${from} -> ${to}`;
+  }
+
+  if (isPlainRecord(value) && "from" in value && "to" in value) {
+    return `${label} ${safeDisplayValue(value.from)} -> ${safeDisplayValue(value.to)}`;
+  }
+
+  return label;
+}
+
+function isSensitiveField(field: string): boolean {
+  const normalized = field.replace(/[^a-z0-9]/gi, "").toLowerCase();
+  return /password|passwd|pwd|secret|token|apikey|privatekey|accesskey|credential|authorization|auth|bearer|cookie|session|jwt|csrf|signature/.test(normalized);
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formatCountryCode(value: string): string {
+  return countries.find((country) => country.value === value.toLowerCase())?.label || value.toUpperCase();
+}
+
+function isToday(date: string): boolean {
+  return date === new Date().toISOString().slice(0, 10);
+}
+
+function isThisMonth(date: string): boolean {
+  return date.startsWith(new Date().toISOString().slice(0, 7));
+}
+
+createRoot(document.getElementById("root")!).render(<App />);

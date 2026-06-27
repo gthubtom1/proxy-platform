@@ -1,0 +1,19 @@
+{
+  "name": "@proxy-platform/worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "dev": "tsx src/index.ts",
+    "start": "node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@proxy-platform/db": "0.1.0",
+    "@proxy-platform/shared": "0.1.0"
+  },
+  "devDependencies": {
+    "tsx": "^4.16.2"
+  }
+}

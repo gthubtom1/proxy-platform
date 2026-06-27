@@ -1,0 +1,31 @@
+{
+  "name": "proxy-platform",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "build": "npm run build -w @proxy-platform/shared && npm run build -w @proxy-platform/db && npm run build -w @proxy-platform/api && npm run build -w @proxy-platform/gateway && npm run build -w @proxy-platform/worker && npm run build -w @proxy-platform/web",
+    "dev:api": "npm run dev -w @proxy-platform/api",
+    "dev:gateway": "npm run dev -w @proxy-platform/gateway",
+    "dev:worker": "npm run dev -w @proxy-platform/worker",
+    "dev:web": "npm run dev -w @proxy-platform/web",
+    "prisma:generate": "npm run prisma:generate -w @proxy-platform/db",
+    "prisma:migrate": "npm run prisma:migrate -w @proxy-platform/db",
+    "prisma:push": "npm run prisma:push -w @proxy-platform/db",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "npm run typecheck -w @proxy-platform/shared && npm run typecheck -w @proxy-platform/db && npm run typecheck -w @proxy-platform/api && npm run typecheck -w @proxy-platform/gateway && npm run typecheck -w @proxy-platform/worker && npm run typecheck -w @proxy-platform/web"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/node": "^20.14.10",
+    "typescript": "^5.5.3",
+    "vitest": "^4.1.9"
+  }
+}

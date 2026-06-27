@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id                       Int          @id @default(autoincrement())
+  username                 String       @unique
+  passwordHash             String       @map("password_hash")
+  role                     String       @default("user")
+  status                   String       @default("active")
+  // Residential bucket. These two columns predate the residential/hosting split,
+  // so they keep their original names and now mean "residential" specifically.
+  // 0 quota means unlimited (mirrors maxConcurrentConnections semantics).
+  trafficQuotaBytes        BigInt       @default(0) @map("traffic_quota_bytes")
+  trafficUsedBytes         BigInt       @default(0) @map("traffic_used_bytes")
+  // Datacenter (hosting) bucket: a separate quota/usage pool so residential and
+  // hosting traffic are metered and capped independently. 0 quota = unlimited.
+  trafficQuotaHostingBytes BigInt       @default(0) @map("traffic_quota_hosting_bytes")
+  trafficUsedHostingBytes  BigInt       @default(0) @map("traffic_used_hosting_bytes")
+  allowedCountriesJson     String       @default("[]") @map("allowed_countries_json")
+  allowedSourceIpsJson     String       @default("[]") @map("allowed_source_ips_json")
+  maxProxyEntries          Int          @default(1) @map("max_proxy_entries")
+  // 0 means unlimited concurrent connections (the gateway only enforces a limit
+  // when this is > 0). Default unlimited so fingerprint browsers, which open many
+  // parallel connections per page, are not throttled to a single connection.
+  maxConcurrentConnections Int          @default(0) @map("max_concurrent_connections")
+  createdAt                DateTime     @default(now()) @map("created_at")
+  updatedAt                DateTime     @updatedAt @map("updated_at")
+  quotaResetAt             DateTime?    @map("quota_reset_at")
+
+  proxyEntries             ProxyEntry[]
+  trafficDaily             TrafficDaily[]
+  operationLogs            OperationLog[]
+
+  @@map("users")
+}
+
+model UpstreamProxy {
+  id                Int             @id @default(autoincrement())
+  host              String
+  port              Int
+  username          String
+  passwordEncrypted String          @map("password_encrypted")
+  status            String          @default("free")
+  currentIp         String?         @map("current_ip")
+  country           String?
+  region            String?
+  city              String?
+  isp               String?
+  asn               String?
+  ipType            String          @default("unknown") @map("ip_type")
+  ipTypeCheckedAt   DateTime?       @map("ip_type_checked_at")
+  latencyMs         Int?            @map("latency_ms")
+  score             Int             @default(0)
+  lockedByEntryId   Int?            @unique @map("locked_by_entry_id")
+  failCount         Int             @default(0) @map("fail_count")
+  successCount      Int             @default(0) @map("success_count")
+  lastErrorType     String?         @map("last_error_type")
+  lastCheckedAt     DateTime?       @map("last_checked_at")
+  lastChangedAt     DateTime?       @map("last_changed_at")
+  cooldownUntil     DateTime?       @map("cooldown_until")
+  // Stability scoring (geo-first, for survey-friendly selection). Computed
+  // periodically by the worker from recent scan_logs; 0/unknown until first run.
+  stabilityScore     Int            @default(0) @map("stability_score")
+  stabilityTier      String         @default("unknown") @map("stability_tier")
+  regionChanges24h   Int            @default(0) @map("region_changes_24h")
+  minChangeIntervalMin Int?         @map("min_change_interval_min")
+  stableSince        DateTime?      @map("stable_since")
+  stabilityCheckedAt DateTime?      @map("stability_checked_at")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+
+  lockedByEntry     ProxyEntry?     @relation("LockedUpstream", fields: [lockedByEntryId], references: [id])
+  scanLogs          ScanLog[]
+
+  @@unique([host, port, username])
+  @@index([status, country, region, city])
+  @@index([status, lastCheckedAt])
+  @@map("upstream_proxies")
+}
+
+model ProxyEntry {
+  id                 Int              @id @default(autoincrement())
+  userId             Int              @map("user_id")
+  username           String           @unique
+  passwordHash       String           @map("password_hash")
+  targetCountry      String           @map("target_country")
+  targetRegion       String?          @map("target_region")
+  targetCity         String?          @map("target_city")
+  // Which pool this entry draws from: null/"residential" = exclude datacenter
+  // (the default), "hosting" = datacenter only. Honored on extract, rebind and
+  // "change IP" so the entry never flips between residential and datacenter.
+  targetIpType       String?          @map("target_ip_type")
+  // Survey grading preference: "static" = only draw from the geo-stable pool.
+  // Persisted so change-IP / rebind keep the same grade as the original extract.
+  targetStabilityTier String?         @map("target_stability_tier")
+  // Precise extraction grade (EXTRACT_GRADE_*). Supersedes targetIpType/Tier for
+  // matching; lets change-IP / rebind reselect within the exact same grade.
+  targetGrade        String?          @map("target_grade")
+  currentUpstreamId  Int?             @map("current_upstream_id")
+  currentIp          String?          @map("current_ip")
+  currentCountry     String?          @map("current_country")
+  currentRegion      String?          @map("current_region")
+  currentCity        String?          @map("current_city")
+  preferredExitIp    String?          @map("preferred_exit_ip")
+  preferredRegion    String?          @map("preferred_region")
+  preferredCity      String?          @map("preferred_city")
+  status             String           @default("active")
+  trafficUsedBytes   BigInt           @default(0) @map("traffic_used_bytes")
+  activeConnections  Int              @default(0) @map("active_connections")
+  lastUsedAt         DateTime?        @map("last_used_at")
+  lastCheckedAt      DateTime?        @map("last_checked_at")
+  expiresAt          DateTime?        @map("expires_at")
+  createdAt          DateTime         @default(now()) @map("created_at")
+  updatedAt          DateTime         @updatedAt @map("updated_at")
+
+  user               User             @relation(fields: [userId], references: [id])
+  lockedUpstream     UpstreamProxy?   @relation("LockedUpstream")
+  trafficDaily       TrafficDaily[]
+
+  @@index([userId])
+  @@index([status, activeConnections])
+  @@index([status, lastUsedAt])
+  @@map("proxy_entries")
+}
+
+model TrafficDaily {
+  id           Int        @id @default(autoincrement())
+  userId       Int        @map("user_id")
+  proxyEntryId Int        @map("proxy_entry_id")
+  date         String
+  bytesUp      BigInt     @default(0) @map("bytes_up")
+  bytesDown    BigInt     @default(0) @map("bytes_down")
+  totalBytes   BigInt     @default(0) @map("total_bytes")
+  connections  Int        @default(0)
+
+  user         User       @relation(fields: [userId], references: [id])
+  proxyEntry   ProxyEntry @relation(fields: [proxyEntryId], references: [id])
+
+  @@unique([userId, proxyEntryId, date])
+  @@index([userId])
+  @@index([proxyEntryId])
+  @@map("traffic_daily")
+}
+
+model ScanLog {
+  id              Int            @id @default(autoincrement())
+  upstreamProxyId Int            @map("upstream_proxy_id")
+  success         Boolean
+  exitIp          String?        @map("exit_ip")
+  country         String?
+  region          String?
+  city            String?
+  latencyMs       Int?           @map("latency_ms")
+  errorType       String?        @map("error_type")
+  message         String?
+  createdAt       DateTime       @default(now()) @map("created_at")
+
+  upstreamProxy   UpstreamProxy  @relation(fields: [upstreamProxyId], references: [id])
+
+  @@index([upstreamProxyId, createdAt])
+  @@index([createdAt])
+  @@map("scan_logs")
+}
+
+model OperationLog {
+  id          Int       @id @default(autoincrement())
+  actorUserId Int?      @map("actor_user_id")
+  action      String
+  targetType  String    @map("target_type")
+  targetId    String?   @map("target_id")
+  detailJson  String?   @map("detail_json")
+  createdAt   DateTime  @default(now()) @map("created_at")
+
+  actor       User?     @relation(fields: [actorUserId], references: [id])
+
+  @@index([createdAt])
+  @@index([actorUserId])
+  @@map("operation_logs")
+}
+
+model IpGeoCache {
+  ip        String   @id
+  country   String?
+  region    String?
+  city      String?
+  isp       String?
+  asn       String?
+  provider  String?
+  ipType    String?  @map("ip_type")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("ip_geo_cache")
+}

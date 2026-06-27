@@ -1,0 +1,62 @@
+node_modules/
+dist/
+.env
+.env.local
+data/
+*.log
+*.tsbuildinfo
+apps/web/dist/
+packages/db/generated/
+
+# Secrets: master encryption key and any *.txt credential dumps. Never commit.
+# (.env.example is allowed below because it holds no real values.)
+密钥.txt
+*.txt
+!.env.example
+
+# Local temp / debug scratch space and runtime logs.
+tmp/
+.tmp-runtime-logs/
+.tmp-*
+
+# AI assistant / dev-process files (kept locally, not part of the published program).
+.cursor/
+.skills/
+.codex-bridge.md
+CLAUDE.md
+AGENTS.md
+scripts/codex_read.ps1
+
+# Dev-process docs (project state / handoff / specs). docs/DEPLOY.md stays published.
+docs/00_QUICK_INDEX.md
+docs/01_PROJECT_STATE.md
+docs/12_SESSION_HANDOFF.md
+docs/13_TASK_STATUS.md
+docs/REQ-112_FrontendFirstContractPlan.md
+docs/superpowers/
+
+# Dev-only convenience scripts (single-service / feature-branch helpers).
+scripts/setup-stability.ps1
+scripts/start-admin-web.ps1
+scripts/start-user-web.ps1
+scripts/start-feat110-api.ps1
+scripts/start-feat110-web.ps1
+scripts/start_api_clean_3105.bat
+
+# Deploy artifacts and one-off ops/verify scripts (built or run manually, not source).
+*.tar.gz
+deploy-*.sh
+verify-*.sh
+verify-*.mjs
+q-*.sh
+smoke-*.sh
+preview-*.html
+
+# Local data-analysis / scratch files (not part of the published program).
+analyze_*.py
+survey_score.py
+*.jsonl
+x.name
+
+# Editor workspace settings (per-machine, not shared).
+.vscode/

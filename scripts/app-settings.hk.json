@@ -1,0 +1,12 @@
+{
+  "scanIntervalMs": 600000,
+  "scanBatchSize": 40,
+  "scanConcurrency": 5,
+  "scanTimeoutMs": 15000,
+  "geoCacheTtlMs": 86400000,
+  "idleReleaseMinutes": 60,
+  "minHoldMinutes": 15,
+  "idleReleaseIntervalMs": 600000,
+  "maxScanFailures": 10,
+  "cooldownMs": 60000
+}
